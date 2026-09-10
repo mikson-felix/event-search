@@ -109,9 +109,7 @@ def test_list_blobs_uses_folder_name_in_prefix(
     )
 
     result = source.list_blobs(
-        [
-            "2026/09/10/08",
-        ]
+        "2026/09/10/08",
     )
 
     container_client.list_blobs.assert_called_once_with(
@@ -149,59 +147,12 @@ def test_list_blobs_ignores_non_ndjson_files(
     )
 
     result = source.list_blobs(
-        [
-            "2026/09/10/08",
-        ]
+        "2026/09/10/08",
     )
 
     assert len(result) == 1
 
     assert result[0].name == ("archive/year=2026/month=09/day=10/hour=08/events.ndjson")
-
-
-def test_list_blobs_queries_each_partition(
-    container_client: MagicMock,
-) -> None:
-    container_client.list_blobs.side_effect = [
-        [
-            SimpleNamespace(
-                name=("archive/year=2026/month=09/day=10/hour=08/a.ndjson"),
-            ),
-        ],
-        [
-            SimpleNamespace(
-                name=("archive/year=2026/month=09/day=10/hour=09/b.ndjson"),
-            ),
-        ],
-    ]
-
-    source = AzureBlobSource(
-        container_url="https://example.blob.core.windows.net/events",
-        sas_token="test-token",
-        folder_name="archive",
-    )
-
-    result = source.list_blobs(
-        [
-            "2026/09/10/08",
-            "2026/09/10/09",
-        ]
-    )
-
-    assert container_client.list_blobs.call_count == 2
-
-    container_client.list_blobs.assert_any_call(
-        name_starts_with=("archive/year=2026/month=09/day=10/hour=08/"),
-    )
-
-    container_client.list_blobs.assert_any_call(
-        name_starts_with=("archive/year=2026/month=09/day=10/hour=09/"),
-    )
-
-    assert [blob.partition for blob in result] == [
-        "2026/09/10/08",
-        "2026/09/10/09",
-    ]
 
 
 def test_list_blobs_without_folder_name(
@@ -216,9 +167,7 @@ def test_list_blobs_without_folder_name(
     )
 
     result = source.list_blobs(
-        [
-            "2026/09/10/08",
-        ]
+        "2026/09/10/08",
     )
 
     assert result == []
@@ -267,7 +216,6 @@ def test_download_writes_blob_to_target(
     )
 
     blob_client.download_blob.assert_called_once_with()
-
     downloader.readinto.assert_called_once()
 
     assert target.exists()

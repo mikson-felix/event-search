@@ -17,7 +17,7 @@ from .models import (
 class BlobSource(Protocol):
     def list_blobs(
         self,
-        partitions: list[str],
+        partition: str,
     ) -> list[BlobObject]: ...
 
     def download(

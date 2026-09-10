@@ -30,15 +30,11 @@ from event_search.presentation.console import ConsoleRenderer
 @dataclass(frozen=True)
 class Application:
     settings: Settings
-
     time_range_resolver: TimeRangeResolver
     partition_resolver: BlobPartitionResolver
-
     sync_service: SyncService
     search_service: SearchService
-
     manifest: DuckDBManifestRepository
-
     renderer: ConsoleRenderer
 
 
@@ -66,6 +62,7 @@ def build_application() -> Application:
         manifest=manifest,
         materializer=materializer,
         temp_dir=settings.cache.temp_dir,
+        concurrency=settings.sync.concurrency,
     )
 
     search_service = SearchService(

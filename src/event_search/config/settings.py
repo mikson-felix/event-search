@@ -89,6 +89,11 @@ class SearchSettings(BaseModel):
     )
 
 
+class SyncSettings(BaseModel):
+    concurrency: int = 20
+    target_parquet_size_mb: int = 128
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -99,7 +104,6 @@ class Settings(BaseSettings):
     )
 
     azure: AzureSettings
-
     cache: CacheSettings = Field(default_factory=CacheSettings)
-
     search: SearchSettings = Field(default_factory=SearchSettings)
+    sync: SyncSettings

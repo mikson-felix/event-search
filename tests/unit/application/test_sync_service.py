@@ -1,6 +1,7 @@
-from __future__ import annotations
-
 from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
 
 from event_search.application.sync_service import SyncService
 from event_search.domain.models import (
@@ -9,275 +10,216 @@ from event_search.domain.models import (
 )
 
 
-class FakeBlobSource:
-    def __init__(
-        self,
-        blobs: list[BlobObject],
-    ) -> None:
-        self.blobs = blobs
-        self.list_calls: list[list[str]] = []
-        self.download_calls: list[tuple[BlobObject, Path]] = []
-
-    def list_blobs(
-        self,
-        partitions: list[str],
-    ) -> list[BlobObject]:
-        self.list_calls.append(partitions)
-
-        return [blob for blob in self.blobs if blob.partition in partitions]
-
-    def download(
-        self,
-        blob: BlobObject,
-        destination: Path,
-    ) -> None:
-        self.download_calls.append(
-            (
-                blob,
-                destination,
-            )
-        )
-
-        destination.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        destination.write_bytes(b"test-data")
+@pytest.fixture
+def source() -> MagicMock:
+    return MagicMock()
 
 
-class FakeManifest:
-    def __init__(
-        self,
-        materialized: set[str] | None = None,
-    ) -> None:
-        self.materialized = materialized or set()
-
-        self.saved: list[
-            tuple[
-                BlobObject,
-                MaterializationResult,
-            ]
-        ] = []
-
-    def is_materialized(
-        self,
-        blob: BlobObject,
-    ) -> bool:
-        return blob.name in self.materialized
-
-    def save(
-        self,
-        *,
-        blob: BlobObject,
-        result: MaterializationResult,
-    ) -> None:
-        self.saved.append(
-            (
-                blob,
-                result,
-            )
-        )
+@pytest.fixture
+def manifest() -> MagicMock:
+    return MagicMock()
 
 
-class FakeMaterializer:
-    def __init__(
-        self,
-        parquet_dir: Path,
-    ) -> None:
-        self.parquet_dir = parquet_dir
-
-        self.calls: list[
-            tuple[
-                Path,
-                BlobObject,
-            ]
-        ] = []
-
-    def materialize(
-        self,
-        *,
-        source_file: Path,
-        blob: BlobObject,
-    ) -> MaterializationResult:
-        self.calls.append(
-            (
-                source_file,
-                blob,
-            )
-        )
-
-        parquet_path = self.parquet_dir / blob.partition / f"{Path(blob.file_name).stem}.parquet"
-
-        parquet_path.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        parquet_path.touch()
-
-        return MaterializationResult(
-            path=parquet_path,
-            events_count=1,
-        )
+@pytest.fixture
+def materializer() -> MagicMock:
+    return MagicMock()
 
 
 def make_blob(
-    name: str,
+    *,
+    partition: str,
+    file_name: str,
 ) -> BlobObject:
-    path = Path(name)
+    year, month, day, hour = partition.split("/")
 
     return BlobObject(
-        name=name,
-        partition=str(path.parent),
-        file_name=path.name,
+        name=(f"activity-logs/year={year}/month={month}/day={day}/hour={hour}/{file_name}"),
+        partition=partition,
+        file_name=file_name,
     )
 
 
-def test_sync_materializes_only_missing_blobs(
+def test_rejects_non_positive_concurrency(
+    source: MagicMock,
+    manifest: MagicMock,
+    materializer: MagicMock,
     tmp_path: Path,
 ) -> None:
-    partition = "2026/09/09/08"
-
-    blob_a = make_blob(
-        f"{partition}/a.ndjson",
-    )
-
-    blob_b = make_blob(
-        f"{partition}/b.ndjson",
-    )
-
-    blob_c = make_blob(
-        f"{partition}/c.ndjson",
-    )
-
-    source = FakeBlobSource(
-        [
-            blob_a,
-            blob_b,
-            blob_c,
-        ]
-    )
-
-    manifest = FakeManifest(
-        materialized={
-            blob_a.name,
-            blob_c.name,
-        }
-    )
-
-    materializer = FakeMaterializer(
-        tmp_path / "parquet",
-    )
-
-    service = SyncService(
-        source=source,
-        manifest=manifest,
-        materializer=materializer,
-        temp_dir=tmp_path / "tmp",
-    )
-
-    result = service.sync(
-        [
-            partition,
-        ]
-    )
-
-    assert result.discovered == 3
-    assert result.materialized == 1
-    assert result.skipped == 2
-
-    assert source.list_calls == [
-        [
-            partition,
-        ]
-    ]
-
-    assert len(source.download_calls) == 1
-
-    downloaded_blob, downloaded_path = source.download_calls[0]
-
-    assert downloaded_blob == blob_b
-
-    assert downloaded_path == (tmp_path / "tmp" / partition / "b.ndjson").resolve()
-
-    assert len(materializer.calls) == 1
-
-    source_file, materialized_blob = materializer.calls[0]
-
-    assert materialized_blob == blob_b
-
-    assert source_file == (tmp_path / "tmp" / partition / "b.ndjson").resolve()
-
-    assert len(manifest.saved) == 1
-
-    saved_blob, saved_result = manifest.saved[0]
-
-    assert saved_blob == blob_b
-    assert saved_result.events_count == 1
-
-    assert not downloaded_path.exists()
+    with pytest.raises(
+        ValueError,
+        match="concurrency must be greater than zero",
+    ):
+        SyncService(
+            source=source,
+            manifest=manifest,
+            materializer=materializer,
+            temp_dir=tmp_path,
+            concurrency=0,
+        )
 
 
 def test_sync_does_nothing_for_empty_partition(
+    source: MagicMock,
+    manifest: MagicMock,
+    materializer: MagicMock,
     tmp_path: Path,
 ) -> None:
-    source = FakeBlobSource([])
-
-    manifest = FakeManifest()
-
-    materializer = FakeMaterializer(
-        tmp_path / "parquet",
-    )
-
     service = SyncService(
         source=source,
         manifest=manifest,
         materializer=materializer,
-        temp_dir=tmp_path / "tmp",
+        temp_dir=tmp_path,
+        concurrency=1,
     )
 
-    result = service.sync(
-        [
-            "2026/09/09/08",
-        ]
-    )
+    result = service.sync([])
 
     assert result.discovered == 0
     assert result.materialized == 0
     assert result.skipped == 0
 
-    assert source.download_calls == []
-    assert materializer.calls == []
-    assert manifest.saved == []
+    source.list_blobs.assert_not_called()
+    source.download.assert_not_called()
+
+    manifest.is_materialized.assert_not_called()
+    manifest.save.assert_not_called()
+
+    materializer.materialize.assert_not_called()
 
 
-def test_temp_file_is_removed_after_materialization(
+def test_sync_materializes_only_missing_blobs(
+    source: MagicMock,
+    manifest: MagicMock,
+    materializer: MagicMock,
     tmp_path: Path,
 ) -> None:
-    partition = "2026/09/09/08"
+    partition = "2026/09/10/08"
 
-    blob = make_blob(
-        f"{partition}/events.ndjson",
+    cached_blob = make_blob(
+        partition=partition,
+        file_name="cached.ndjson",
     )
 
-    source = FakeBlobSource(
-        [
-            blob,
-        ]
+    missing_blob = make_blob(
+        partition=partition,
+        file_name="missing.ndjson",
     )
 
-    manifest = FakeManifest()
+    source.list_blobs.return_value = [
+        cached_blob,
+        missing_blob,
+    ]
 
-    materializer = FakeMaterializer(
-        tmp_path / "parquet",
+    manifest.is_materialized.side_effect = lambda blob: blob == cached_blob
+
+    materialization_result = MagicMock(
+        spec=MaterializationResult,
     )
+
+    materializer.materialize.return_value = materialization_result
+
+    def download(
+        blob: BlobObject,
+        target: Path,
+    ) -> None:
+        target.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+        target.write_text(
+            '{"event_id":"event-001"}\n',
+            encoding="utf-8",
+        )
+
+    source.download.side_effect = download
 
     service = SyncService(
         source=source,
         manifest=manifest,
         materializer=materializer,
-        temp_dir=tmp_path / "tmp",
+        temp_dir=tmp_path,
+        concurrency=1,
+    )
+
+    result = service.sync(
+        [
+            partition,
+        ]
+    )
+
+    assert result.discovered == 2
+    assert result.materialized == 1
+    assert result.skipped == 1
+
+    source.list_blobs.assert_called_once_with(
+        partition,
+    )
+
+    source.download.assert_called_once()
+
+    downloaded_blob = source.download.call_args.args[0]
+    downloaded_target = source.download.call_args.args[1]
+
+    assert downloaded_blob == missing_blob
+    assert downloaded_target == (tmp_path.resolve() / partition / "missing.ndjson")
+
+    materializer.materialize.assert_called_once_with(
+        source_file=(tmp_path.resolve() / partition / "missing.ndjson"),
+        blob=missing_blob,
+    )
+
+    manifest.save.assert_called_once_with(
+        blob=missing_blob,
+        result=materialization_result,
+    )
+
+
+def test_temp_file_is_removed_after_materialization(
+    source: MagicMock,
+    manifest: MagicMock,
+    materializer: MagicMock,
+    tmp_path: Path,
+) -> None:
+    partition = "2026/09/10/08"
+
+    blob = make_blob(
+        partition=partition,
+        file_name="events.ndjson",
+    )
+
+    source.list_blobs.return_value = [
+        blob,
+    ]
+
+    manifest.is_materialized.return_value = False
+
+    materializer.materialize.return_value = MagicMock(
+        spec=MaterializationResult,
+    )
+
+    target = tmp_path.resolve() / partition / "events.ndjson"
+
+    def download(
+        blob: BlobObject,
+        target: Path,
+    ) -> None:
+        target.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+        target.write_text(
+            '{"event_id":"event-001"}\n',
+            encoding="utf-8",
+        )
+
+    source.download.side_effect = download
+
+    service = SyncService(
+        source=source,
+        manifest=manifest,
+        materializer=materializer,
+        temp_dir=tmp_path,
+        concurrency=1,
     )
 
     service.sync(
@@ -286,41 +228,95 @@ def test_temp_file_is_removed_after_materialization(
         ]
     )
 
-    temp_file = (tmp_path / "tmp" / partition / "events.ndjson").resolve()
-
-    assert not temp_file.exists()
+    assert not target.exists()
 
 
-def test_skipped_blob_is_not_downloaded(
+def test_temp_file_is_removed_when_materialization_fails(
+    source: MagicMock,
+    manifest: MagicMock,
+    materializer: MagicMock,
     tmp_path: Path,
 ) -> None:
-    partition = "2026/09/09/08"
+    partition = "2026/09/10/08"
 
     blob = make_blob(
-        f"{partition}/events.ndjson",
+        partition=partition,
+        file_name="events.ndjson",
     )
 
-    source = FakeBlobSource(
-        [
-            blob,
-        ]
-    )
+    source.list_blobs.return_value = [
+        blob,
+    ]
 
-    manifest = FakeManifest(
-        materialized={
-            blob.name,
-        }
-    )
+    manifest.is_materialized.return_value = False
 
-    materializer = FakeMaterializer(
-        tmp_path / "parquet",
-    )
+    target = tmp_path.resolve() / partition / "events.ndjson"
+
+    def download(
+        blob: BlobObject,
+        target: Path,
+    ) -> None:
+        target.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+        target.write_text(
+            '{"event_id":"event-001"}\n',
+            encoding="utf-8",
+        )
+
+    source.download.side_effect = download
+
+    materializer.materialize.side_effect = RuntimeError("materialization failed")
 
     service = SyncService(
         source=source,
         manifest=manifest,
         materializer=materializer,
-        temp_dir=tmp_path / "tmp",
+        temp_dir=tmp_path,
+        concurrency=1,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="materialization failed",
+    ):
+        service.sync(
+            [
+                partition,
+            ]
+        )
+
+    assert not target.exists()
+
+    manifest.save.assert_not_called()
+
+
+def test_skipped_blob_is_not_downloaded(
+    source: MagicMock,
+    manifest: MagicMock,
+    materializer: MagicMock,
+    tmp_path: Path,
+) -> None:
+    partition = "2026/09/10/08"
+
+    blob = make_blob(
+        partition=partition,
+        file_name="events.ndjson",
+    )
+
+    source.list_blobs.return_value = [
+        blob,
+    ]
+
+    manifest.is_materialized.return_value = True
+
+    service = SyncService(
+        source=source,
+        manifest=manifest,
+        materializer=materializer,
+        temp_dir=tmp_path,
+        concurrency=1,
     )
 
     result = service.sync(
@@ -333,6 +329,123 @@ def test_skipped_blob_is_not_downloaded(
     assert result.materialized == 0
     assert result.skipped == 1
 
-    assert source.download_calls == []
-    assert materializer.calls == []
-    assert manifest.saved == []
+    source.download.assert_not_called()
+    materializer.materialize.assert_not_called()
+    manifest.save.assert_not_called()
+
+
+def test_sync_queries_each_partition(
+    source: MagicMock,
+    manifest: MagicMock,
+    materializer: MagicMock,
+    tmp_path: Path,
+) -> None:
+    source.list_blobs.return_value = []
+
+    service = SyncService(
+        source=source,
+        manifest=manifest,
+        materializer=materializer,
+        temp_dir=tmp_path,
+        concurrency=2,
+    )
+
+    result = service.sync(
+        [
+            "2026/09/10/08",
+            "2026/09/10/09",
+        ]
+    )
+
+    assert result.discovered == 0
+    assert result.materialized == 0
+    assert result.skipped == 0
+
+    assert source.list_blobs.call_count == 2
+
+    source.list_blobs.assert_any_call("2026/09/10/08")
+
+    source.list_blobs.assert_any_call("2026/09/10/09")
+
+
+def test_sync_aggregates_results_from_multiple_partitions(
+    source: MagicMock,
+    manifest: MagicMock,
+    materializer: MagicMock,
+    tmp_path: Path,
+) -> None:
+    partition_08 = "2026/09/10/08"
+    partition_09 = "2026/09/10/09"
+
+    blob_08 = make_blob(
+        partition=partition_08,
+        file_name="a.ndjson",
+    )
+
+    blob_09 = make_blob(
+        partition=partition_09,
+        file_name="b.ndjson",
+    )
+
+    def list_blobs(
+        partition: str,
+    ) -> list[BlobObject]:
+        if partition == partition_08:
+            return [
+                blob_08,
+            ]
+
+        if partition == partition_09:
+            return [
+                blob_09,
+            ]
+
+        return []
+
+    source.list_blobs.side_effect = list_blobs
+
+    manifest.is_materialized.side_effect = lambda blob: blob == blob_09
+
+    materializer.materialize.return_value = MagicMock(
+        spec=MaterializationResult,
+    )
+
+    def download(
+        blob: BlobObject,
+        target: Path,
+    ) -> None:
+        target.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+        target.write_text(
+            "{}\n",
+            encoding="utf-8",
+        )
+
+    source.download.side_effect = download
+
+    service = SyncService(
+        source=source,
+        manifest=manifest,
+        materializer=materializer,
+        temp_dir=tmp_path,
+        concurrency=2,
+    )
+
+    result = service.sync(
+        [
+            partition_08,
+            partition_09,
+        ]
+    )
+
+    assert result.discovered == 2
+    assert result.materialized == 1
+    assert result.skipped == 1
+
+    assert source.list_blobs.call_count == 2
+
+    source.download.assert_called_once()
+    materializer.materialize.assert_called_once()
+    manifest.save.assert_called_once()
