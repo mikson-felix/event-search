@@ -14,6 +14,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class AzureSettings(BaseModel):
     container_url: str
     sas_token: SecretStr
+    folder_name: str = ""
 
     @field_validator("container_url")
     @classmethod

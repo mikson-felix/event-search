@@ -11,11 +11,13 @@ class AzureBlobSource:
         *,
         container_url: str,
         sas_token: str,
+        folder_name: str,
     ) -> None:
         self._client = ContainerClient.from_container_url(
             container_url=container_url,
             credential=sas_token.lstrip("?"),
         )
+        self._folder_name = folder_name.strip("/")
 
     def list_blobs(
         self,
@@ -24,7 +26,7 @@ class AzureBlobSource:
         result: list[BlobObject] = []
 
         for partition in partitions:
-            prefix = f"{partition}/"
+            prefix = self._build_prefix(partition=partition)
 
             blobs = self._client.list_blobs(name_starts_with=prefix)
 
@@ -66,3 +68,8 @@ class AzureBlobSource:
 
         with target.open("wb") as stream:
             downloader.readinto(stream)
+
+    def _build_prefix(self, partition: str) -> str:
+        parts = [self._folder_name, partition.strip("/")]
+
+        return "/".join(part for part in parts if part) + "/"

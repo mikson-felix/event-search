@@ -35,6 +35,7 @@ def fake_settings(
         azure=SimpleNamespace(
             container_url="https://example.blob.core.windows.net/events",
             sas_token=FakeSecret("test-sas-token"),
+            folder_name="test-folder",
         ),
         cache=SimpleNamespace(
             database_path=tmp_path / "event-search.duckdb",
@@ -209,6 +210,7 @@ def test_build_application_creates_azure_blob_source_from_settings(
     azure_blob_source.assert_called_once_with(
         container_url=fake_settings.azure.container_url,
         sas_token="test-sas-token",
+        folder_name="test-folder",
     )
 
 

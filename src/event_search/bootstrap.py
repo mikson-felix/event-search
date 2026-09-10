@@ -48,6 +48,7 @@ def build_application() -> Application:
     blob_source = AzureBlobSource(
         container_url=(settings.azure.container_url),
         sas_token=(settings.azure.sas_token.get_secret_value()),
+        folder_name=settings.azure.folder_name,
     )
 
     manifest = DuckDBManifestRepository(settings.cache.database_path)

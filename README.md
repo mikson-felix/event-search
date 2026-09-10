@@ -290,6 +290,7 @@ Example:
 ```dotenv
 EVENT_SEARCH_AZURE__CONTAINER_URL=https://storage-account.blob.core.windows.net/events
 EVENT_SEARCH_AZURE__SAS_TOKEN="sv=...&spr=https&sr=c&sp=rl&se=...&sig=..."
+EVENT_SEARCH_AZURE__FOLDER_NAME=events
 
 EVENT_SEARCH_CACHE__PARQUET_DIR=.cache/parquet
 EVENT_SEARCH_CACHE__DATABASE_PATH=.cache/event_search.duckdb
