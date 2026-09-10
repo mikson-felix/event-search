@@ -70,6 +70,8 @@ class AzureBlobSource:
             downloader.readinto(stream)
 
     def _build_prefix(self, partition: str) -> str:
-        parts = [self._folder_name, partition.strip("/")]
+        year, month, day, hour = partition.strip("/").split("/")
+        partition_path = f"year={year}/month={month}/day={day}/hour={hour}"
+        parts = [self._folder_name, partition_path]
 
         return "/".join(part for part in parts if part) + "/"
