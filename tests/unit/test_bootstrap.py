@@ -218,6 +218,7 @@ def test_build_application_uses_cache_paths_from_settings(
 
     dependencies.materializer.assert_called_once_with(
         fake_settings.cache.parquet_dir,
+        target_size_mb=(fake_settings.sync.target_parquet_size_mb),
     )
 
     dependencies.query_engine.assert_called_once_with(

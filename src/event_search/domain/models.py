@@ -23,7 +23,6 @@ class BlobObject:
 class ManifestEntry:
     blob_name: str
     parquet_path: Path
-    events_count: int
     materialized_at: datetime
 
 
@@ -31,6 +30,7 @@ class ManifestEntry:
 class MaterializationResult:
     path: Path
     events_count: int
+    blobs: tuple[BlobObject, ...]
 
 
 @dataclass(frozen=True)

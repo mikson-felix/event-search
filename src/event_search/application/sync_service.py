@@ -1,8 +1,13 @@
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import (
+    ThreadPoolExecutor,
+)
 from dataclasses import dataclass
 from pathlib import Path
 
-from event_search.domain.models import SyncResult
+from event_search.domain.models import (
+    BlobObject,
+    SyncResult,
+)
 from event_search.domain.ports import (
     BlobSource,
     ManifestRepository,
@@ -67,45 +72,51 @@ class SyncService:
         self,
         partition: str,
     ) -> _PartitionSyncResult:
-        blobs = self._source.list_blobs(
-            partition,
-        )
+        blobs = self._source.list_blobs(partition)
 
-        materialized = 0
-        skipped = 0
+        missing_blobs = [blob for blob in blobs if not self._manifest.is_materialized(blob)]
 
-        for blob in blobs:
-            if self._manifest.is_materialized(blob):
-                skipped += 1
-                continue
+        skipped = len(blobs) - len(missing_blobs)
 
-            temp_file = self._temp_dir / blob.partition / blob.file_name
+        if not missing_blobs:
+            return _PartitionSyncResult(
+                discovered=len(blobs),
+                materialized=0,
+                skipped=skipped,
+            )
 
-            try:
+        sources: list[tuple[Path, BlobObject]] = []
+
+        try:
+            for blob in missing_blobs:
+                temp_file = self._temp_dir / blob.partition / blob.file_name
+
                 self._source.download(
                     blob,
                     temp_file,
                 )
 
-                result = self._materializer.materialize(
-                    source_file=temp_file,
-                    blob=blob,
+                sources.append(
+                    (
+                        temp_file,
+                        blob,
+                    )
                 )
 
-                self._manifest.save(
-                    blob=blob,
-                    result=result,
-                )
+            results = self._materializer.materialize(
+                partition=partition,
+                sources=sources,
+            )
 
-                materialized += 1
+            for result in results:
+                self._manifest.save(result)
 
-            finally:
-                temp_file.unlink(
-                    missing_ok=True,
-                )
+        finally:
+            for source_file, _ in sources:
+                source_file.unlink(missing_ok=True)
 
         return _PartitionSyncResult(
             discovered=len(blobs),
-            materialized=materialized,
+            materialized=len(missing_blobs),
             skipped=skipped,
         )

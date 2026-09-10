@@ -40,8 +40,6 @@ class ManifestRepository(Protocol):
 
     def save(
         self,
-        *,
-        blob: BlobObject,
         result: MaterializationResult,
     ) -> None: ...
 
@@ -54,9 +52,9 @@ class Materializer(Protocol):
     def materialize(
         self,
         *,
-        source_file: Path,
-        blob: BlobObject,
-    ) -> MaterializationResult: ...
+        partition: str,
+        sources: list[tuple[Path, BlobObject]],
+    ) -> list[MaterializationResult]: ...
 
 
 class QueryEngine(Protocol):

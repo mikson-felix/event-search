@@ -64,7 +64,7 @@ def build_application() -> Application:
 
     search_result_store = SQLiteSearchResultStore(settings.cache.database_path)
 
-    materializer = ParquetMaterializer(settings.cache.parquet_dir)
+    materializer = ParquetMaterializer(settings.cache.parquet_dir, target_size_mb=settings.sync.target_parquet_size_mb)
 
     query_engine = DuckDBQueryEngine(settings.cache.parquet_dir)
 
