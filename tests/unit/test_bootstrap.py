@@ -42,6 +42,9 @@ def fake_settings(
             concurrency=4,
             target_parquet_size_mb=128,
         ),
+        logging=SimpleNamespace(
+            level="DEBUG",
+        ),
     )
 
 

@@ -3,6 +3,7 @@ from uuid import uuid4
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from loguru import logger
 
 from event_search.domain.errors import MaterializationError
 from event_search.domain.models import (
@@ -75,7 +76,6 @@ class ParquetMaterializer:
             raise ValueError("target_size_mb must be greater than zero")
 
         self._parquet_root = parquet_root.resolve()
-
         self._target_size_bytes = target_size_mb * 1024 * 1024
 
     def materialize(
@@ -93,6 +93,12 @@ class ParquetMaterializer:
         )
 
         groups = self._group_sources(sources)
+        logger.debug(
+            ("Materialization plan: partition={}, source_blobs={}, groups={}"),
+            partition,
+            len(sources),
+            len(groups),
+        )
 
         return [
             self._materialize_group(
@@ -192,6 +198,14 @@ class ParquetMaterializer:
                             rows = []
 
             if rows:
+                source_size_bytes = sum(source_file.stat().st_size for source_file, _ in sources)
+
+                logger.debug(
+                    ("Materializing parquet group: partition={}, blobs={}, source_size_bytes={}"),
+                    partition,
+                    len(sources),
+                    source_size_bytes,
+                )
                 writer = self._write_rows(
                     writer=writer,
                     rows=rows,
@@ -215,7 +229,13 @@ class ParquetMaterializer:
                 writer = None
 
             temp_file.replace(output_file)
-
+            logger.debug(
+                ("Parquet created: path={}, blobs={}, events={}, parquet_size_bytes={}"),
+                output_file,
+                len(sources),
+                events_count,
+                output_file.stat().st_size,
+            )
         except Exception:
             if writer is not None:
                 writer.close()

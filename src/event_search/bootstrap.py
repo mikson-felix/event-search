@@ -31,6 +31,7 @@ from event_search.infrastructure.query.duckdb_engine import (
 from event_search.infrastructure.query.parquet_event_reader import (
     DuckDBParquetEventDetailsReader,
 )
+from event_search.logging import configure_logging
 from event_search.presentation.console import (
     ConsoleRenderer,
 )
@@ -53,23 +54,16 @@ class Application:
 
 def build_application() -> Application:
     settings = Settings()
-
     blob_source = AzureBlobSource(
         container_url=(settings.azure.container_url),
         sas_token=(settings.azure.sas_token.get_secret_value()),
         folder_name=(settings.azure.folder_name),
     )
-
     manifest = SQLiteManifestRepository(settings.cache.database_path)
-
     search_result_store = SQLiteSearchResultStore(settings.cache.database_path)
-
     materializer = ParquetMaterializer(settings.cache.parquet_dir, target_size_mb=settings.sync.target_parquet_size_mb)
-
     query_engine = DuckDBQueryEngine(settings.cache.parquet_dir)
-
     details_reader = DuckDBParquetEventDetailsReader()
-
     sync_service = SyncService(
         source=blob_source,
         manifest=manifest,
@@ -77,20 +71,18 @@ def build_application() -> Application:
         temp_dir=settings.cache.temp_dir,
         concurrency=settings.sync.concurrency,
     )
-
     search_service = SearchService(
         query_engine=query_engine,
         result_store=search_result_store,
         details_reader=details_reader,
     )
-
     timezone_provider = TimezoneProvider()
-
     time_range_resolver = TimeRangeResolver(timezone_provider)
-
     partition_resolver = BlobPartitionResolver()
-
     renderer = ConsoleRenderer()
+    configure_logging(
+        level=settings.logging.level,
+    )
 
     return Application(
         settings=settings,

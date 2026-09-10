@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from azure.storage.blob import ContainerClient
+from loguru import logger
 
 from event_search.domain.models import BlobObject
 
@@ -21,7 +22,11 @@ class AzureBlobSource:
 
     def list_blobs(self, partition: str) -> list[BlobObject]:
         prefix = self._build_prefix(partition=partition)
-
+        logger.debug(
+            "Listing Azure blobs: partition={}, prefix={}",
+            partition,
+            prefix,
+        )
         blobs = self._client.list_blobs(
             name_starts_with=prefix,
         )
@@ -42,13 +47,24 @@ class AzureBlobSource:
                 )
             )
 
-        return sorted(result, key=lambda blob: blob.name)
+        result = sorted(result, key=lambda blob: blob.name)
+        logger.debug(
+            "Azure blobs discovered: partition={}, count={}",
+            partition,
+            len(result),
+        )
+        return result
 
     def download(
         self,
         blob: BlobObject,
         target: Path,
     ) -> None:
+        logger.debug(
+            "Downloading Azure blob: blob={}, target={}",
+            blob.name,
+            target,
+        )
         target.parent.mkdir(
             parents=True,
             exist_ok=True,
@@ -60,6 +76,12 @@ class AzureBlobSource:
 
         with target.open("wb") as stream:
             downloader.readinto(stream)
+
+        logger.debug(
+            "Azure blob downloaded: blob={}, size_bytes={}",
+            blob.name,
+            target.stat().st_size,
+        )
 
     def _build_prefix(self, partition: str) -> str:
         year, month, day, hour = partition.strip("/").split("/")

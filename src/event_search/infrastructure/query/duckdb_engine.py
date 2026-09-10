@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import duckdb
+from loguru import logger
 
 from event_search.domain.models import (
     EventLocator,
@@ -26,6 +27,12 @@ class DuckDBQueryEngine:
         limit: int,
     ) -> list[SearchSummary]:
         parquet_files = self._resolve_partition_files(partitions)
+        logger.debug(
+            ("DuckDB search: partitions={}, parquet_files={}, limit={}"),
+            len(partitions),
+            len(parquet_files),
+            limit,
+        )
 
         if not parquet_files:
             return []
@@ -92,6 +99,10 @@ class DuckDBQueryEngine:
                 params,
             ).fetchall()
 
+        logger.debug(
+            "DuckDB search completed: results={}",
+            len(rows),
+        )
         return [self._to_summary(row) for row in rows]
 
     def _resolve_partition_files(

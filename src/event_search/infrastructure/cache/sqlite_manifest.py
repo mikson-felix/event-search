@@ -1,6 +1,8 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+from loguru import logger
+
 from event_search.domain.models import (
     BlobObject,
     CacheStatus,
@@ -96,9 +98,26 @@ class SQLiteManifestRepository:
         entry = self.get(blob.name)
 
         if entry is None:
+            logger.debug(
+                "Cache miss: blob={} reason=manifest_entry_missing",
+                blob.name,
+            )
             return False
 
-        return entry.parquet_path.exists()
+        if not entry.parquet_path.exists():
+            logger.debug(
+                "Cache miss: blob={} reason=parquet_missing path={}",
+                blob.name,
+                entry.parquet_path,
+            )
+            return False
+
+        logger.debug(
+            "Cache hit: blob={} parquet={}",
+            blob.name,
+            entry.parquet_path,
+        )
+        return True
 
     def save(
         self,
@@ -171,6 +190,12 @@ class SQLiteManifestRepository:
                     for blob in result.blobs
                 ],
             )
+        logger.debug(
+            "Manifest saved: parquet={}, blobs={}, events={}",
+            result.path,
+            len(result.blobs),
+            result.events_count,
+        )
 
     def get_status(
         self,

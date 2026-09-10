@@ -31,6 +31,10 @@ class SyncSettings(BaseModel):
     target_parquet_size_mb: int = 128
 
 
+class LoggingSettings(BaseModel):
+    level: str = "INFO"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="EVENT_SEARCH_",
@@ -41,7 +45,7 @@ class Settings(BaseSettings):
     )
 
     azure: AzureSettings
-
     cache: CacheSettings = CacheSettings()
     search: SearchSettings = SearchSettings()
     sync: SyncSettings = SyncSettings()
+    logging: LoggingSettings = LoggingSettings()

@@ -4,6 +4,8 @@ from concurrent.futures import (
 from dataclasses import dataclass
 from pathlib import Path
 
+from loguru import logger
+
 from event_search.domain.models import (
     BlobObject,
     SyncResult,
@@ -72,13 +74,27 @@ class SyncService:
         self,
         partition: str,
     ) -> _PartitionSyncResult:
+        logger.debug(
+            "Sync partition started: partition={}",
+            partition,
+        )
         blobs = self._source.list_blobs(partition)
-
         missing_blobs = [blob for blob in blobs if not self._manifest.is_materialized(blob)]
-
         skipped = len(blobs) - len(missing_blobs)
+        logger.debug(
+            ("Sync partition state: partition={}, discovered={}, cached={}, missing={}"),
+            partition,
+            len(blobs),
+            skipped,
+            len(missing_blobs),
+        )
 
         if not missing_blobs:
+            logger.debug(
+                "Sync partition fully cached: partition={}",
+                partition,
+            )
+
             return _PartitionSyncResult(
                 discovered=len(blobs),
                 materialized=0,
@@ -91,10 +107,7 @@ class SyncService:
             for blob in missing_blobs:
                 temp_file = self._temp_dir / blob.partition / blob.file_name
 
-                self._source.download(
-                    blob,
-                    temp_file,
-                )
+                self._source.download(blob, temp_file)
 
                 sources.append(
                     (
@@ -110,6 +123,13 @@ class SyncService:
 
             for result in results:
                 self._manifest.save(result)
+
+            logger.debug(
+                ("Partition materialized: partition={}, source_blobs={}, parquet_files={}"),
+                partition,
+                len(missing_blobs),
+                len(results),
+            )
 
         finally:
             for source_file, _ in sources:
