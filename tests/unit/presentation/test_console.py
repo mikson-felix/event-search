@@ -87,44 +87,54 @@ def test_render_results_outputs_table_with_event_data() -> None:
     renderer, stream = make_renderer()
 
     result = SearchSummary(
-        event_id="event-001",
-        user_id="user-001",
-        organization_id="org-001",
-        event_name="LOGIN",
-        category="AUTH",
+        event_id="event-123",
+        user_id="user-123",
+        organization_id="org-123",
+        event_name="VERY_LONG_EVENT_NAME_THAT_SHOULD_BE_SHORTENED",
+        category="VERY_LONG_CATEGORY_NAME_THAT_SHOULD_BE_SHORTENED",
         timestamp=datetime(
             2026,
             9,
             10,
-            10,
-            15,
+            12,
+            30,
             tzinfo=UTC,
         ),
         locator=EventLocator(
-            blob_partition="2026/09/10/10",
-            blob_name="events-001.ndjson",
-            source_line=12,
-            parquet_path=Path("/tmp/2026/09/10/10/events-001.parquet"),
+            parquet_path=Path("/tmp/events.parquet"),
+            source_line=42,
+            blob_partition="2026/09/10/12",
+            blob_name="events.ndjson",
         ),
     )
 
-    renderer.render_results(
-        [
-            result,
-        ]
-    )
+    renderer.render_results([result])
 
     output = normalize_output(stream)
 
     assert "Events (1)" in output
-    assert "event-001" in output
-    assert "user-001" in output
-    assert "org-001" in output
-    assert "LOGIN" in output
-    assert "AUTH" in output
-    assert "2026-09-10T10:15:00+00:00" in output
-    assert "2026/09/10/10" in output
-    assert "events-001.ndjson" in output
+
+    assert "ID" in output
+    assert "User ID" in output
+    assert "Organization ID" in output
+    assert "Event" in output
+    assert "Category" in output
+    assert "Timestamp" in output
+
+    assert "event-123" in output
+    assert "user-123" in output
+    assert "org-123" in output
+
+    assert "VERY_LONG_EVENT_NAM…" in output
+    assert "VERY_LONG…" in output
+
+    assert "2026-09-10T12:30:00+00:00" in output
+
+    assert "Path" not in output
+    assert "Blob" not in output
+    assert "2026/09/10/12" not in output
+    assert "events.ndjson" not in output
+    assert "/tmp/events.parquet" not in output
 
 
 def test_render_results_uses_dash_for_missing_optional_values() -> None:
@@ -152,16 +162,15 @@ def test_render_results_uses_dash_for_missing_optional_values() -> None:
         ),
     )
 
-    renderer.render_results(
-        [
-            result,
-        ]
-    )
+    renderer.render_results([result])
 
     output = normalize_output(stream)
 
     assert "event-002" in output
     assert "-" in output
+
+    assert "2026/09/10/10" not in output
+    assert "events-002.ndjson" not in output
 
 
 def test_render_results_handles_empty_list() -> None:
@@ -175,6 +184,12 @@ def test_render_results_handles_empty_list() -> None:
     assert "ID" in output
     assert "User ID" in output
     assert "Organization ID" in output
+    assert "Event" in output
+    assert "Category" in output
+    assert "Timestamp" in output
+
+    assert "Path" not in output
+    assert "Blob" not in output
 
 
 def test_render_event_outputs_metadata_and_raw_json() -> None:
@@ -274,6 +289,18 @@ def test_render_sync_outputs_sync_statistics() -> None:
     assert "cached: 3" in output
 
 
+def test_shorten_returns_dash_for_none() -> None:
+    assert ConsoleRenderer._shorten(None) == "-"
+
+
+def test_shorten_keeps_short_value() -> None:
+    assert ConsoleRenderer._shorten("AUDIT_LOG") == "AUDIT_LOG"
+
+
+def test_shorten_truncates_long_value() -> None:
+    assert ConsoleRenderer._shorten("VERY_LONG_EVENT_NAME_THAT_SHOULD_BE_SHORTENED") == "VERY_LONG_EVENT_NAM…"
+
+
 def test_format_size_bytes() -> None:
     assert ConsoleRenderer._format_size(0) == "0.0 B"
     assert ConsoleRenderer._format_size(512) == "512.0 B"
@@ -282,7 +309,6 @@ def test_format_size_bytes() -> None:
 
 def test_format_size_kilobytes() -> None:
     assert ConsoleRenderer._format_size(1024) == "1.0 KB"
-
     assert ConsoleRenderer._format_size(1536) == "1.5 KB"
 
 

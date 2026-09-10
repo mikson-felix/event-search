@@ -20,6 +20,20 @@ class ConsoleRenderer:
     ) -> None:
         self._console = console or Console()
 
+    @staticmethod
+    def _shorten(
+        value: str | None,
+        *,
+        length: int = 20,
+    ) -> str:
+        if not value:
+            return "-"
+
+        if len(value) <= length:
+            return value
+
+        return f"{value[: length - 1]}…"
+
     def render_range(
         self,
         value: TimeRange,
@@ -41,6 +55,7 @@ class ConsoleRenderer:
         table = Table(
             title=f"Events ({len(results)})",
             show_lines=False,
+            expand=True,
         )
 
         table.add_column(
@@ -72,27 +87,14 @@ class ConsoleRenderer:
             no_wrap=True,
         )
 
-        table.add_column(
-            "Path",
-            style="dim",
-            no_wrap=True,
-        )
-
-        table.add_column(
-            "Blob",
-            overflow="ellipsis",
-        )
-
         for result in results:
             table.add_row(
                 result.event_id,
                 result.user_id or "-",
                 result.organization_id or "-",
-                result.event_name or "-",
-                result.category or "-",
+                self._shorten(result.event_name or "-", length=20),
+                self._shorten(result.category or "-", length=10),
                 result.timestamp.isoformat(),
-                result.locator.blob_partition,
-                result.locator.blob_name,
             )
 
         self._console.print(table)
