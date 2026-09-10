@@ -36,11 +36,20 @@ class SyncService:
         self._temp_dir = temp_dir.resolve()
         self._concurrency = concurrency
 
-    def sync(self, partitions: list[str]) -> SyncResult:
+    def sync(
+        self,
+        partitions: list[str],
+    ) -> SyncResult:
         if not partitions:
-            return SyncResult(discovered=0, materialized=0, skipped=0)
+            return SyncResult(
+                discovered=0,
+                materialized=0,
+                skipped=0,
+            )
 
-        with ThreadPoolExecutor(max_workers=self._concurrency) as executor:
+        with ThreadPoolExecutor(
+            max_workers=self._concurrency,
+        ) as executor:
             results = list(
                 executor.map(
                     self._sync_partition,
@@ -73,7 +82,10 @@ class SyncService:
             temp_file = self._temp_dir / blob.partition / blob.file_name
 
             try:
-                self._source.download(blob, temp_file)
+                self._source.download(
+                    blob,
+                    temp_file,
+                )
 
                 result = self._materializer.materialize(
                     source_file=temp_file,

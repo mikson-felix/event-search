@@ -31,7 +31,7 @@ def fake_settings(
         ),
         cache=SimpleNamespace(
             parquet_dir=Path(".cache/parquet"),
-            database_path=Path(".cache/event_search.duckdb"),
+            database_path=Path(".cache/event_search.sqlite"),
             temp_dir=Path(".cache/tmp"),
         ),
         search=SimpleNamespace(
@@ -84,13 +84,13 @@ def dependencies(
 
     monkeypatch.setattr(
         bootstrap_module,
-        "DuckDBManifestRepository",
+        "SQLiteManifestRepository",
         manifest,
     )
 
     monkeypatch.setattr(
         bootstrap_module,
-        "DuckDBSearchResultStore",
+        "SQLiteSearchResultStore",
         search_result_store,
     )
 
