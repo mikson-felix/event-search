@@ -2,6 +2,8 @@ from pathlib import Path
 from uuid import uuid4
 
 import pyarrow as pa
+import pyarrow.compute as pc
+import pyarrow.json as pa_json
 import pyarrow.parquet as pq
 from loguru import logger
 
@@ -61,8 +63,49 @@ EVENT_SCHEMA = pa.schema(
     ]
 )
 
+# Shape of the incoming NDJSON events, only the fields this application reads.
+# Fields absent from a given line simply parse as null; unrecognized fields are
+# dropped by ParseOptions.unexpected_field_behavior="ignore" rather than erroring.
+_RAW_EVENT_SCHEMA = pa.schema(
+    [
+        pa.field("event_id", pa.string()),
+        pa.field("timestamp", pa.timestamp("us", tz="UTC")),
+        pa.field(
+            "event",
+            pa.struct(
+                [
+                    pa.field("name", pa.string()),
+                    pa.field("category", pa.string()),
+                ]
+            ),
+        ),
+        pa.field("event_name", pa.string()),
+        pa.field("category", pa.string()),
+        pa.field(
+            "actor",
+            pa.struct(
+                [
+                    pa.field("user_id", pa.string()),
+                    pa.field("organization_id", pa.string()),
+                ]
+            ),
+        ),
+        pa.field(
+            "attributes",
+            pa.struct(
+                [
+                    pa.field("user_id", pa.string()),
+                    pa.field("organization_id", pa.string()),
+                ]
+            ),
+        ),
+    ]
+)
 
-_WRITE_BATCH_SIZE = 10_000
+_RAW_PARSE_OPTIONS = pa_json.ParseOptions(
+    explicit_schema=_RAW_EVENT_SCHEMA,
+    unexpected_field_behavior="ignore",
+)
 
 
 class ParquetMaterializer:
@@ -160,57 +203,27 @@ class ParquetMaterializer:
 
         events_count = 0
         writer: pq.ParquetWriter | None = None
-        rows: list[dict] = []
 
         try:
             for source_file, blob in sources:
-                with source_file.open("rb") as stream:
-                    for (
-                        source_line,
-                        raw_line,
-                    ) in enumerate(
-                        stream,
-                        start=1,
-                    ):
-                        if not raw_line.strip():
-                            continue
-
-                        try:
-                            row = extract_indexed_event(
-                                raw_line,
-                                blob_partition=(blob.partition),
-                                blob_name=(blob.file_name),
-                                source_line=(source_line),
-                            )
-                        except Exception as exc:
-                            raise MaterializationError(f"Failed to parse {blob.name} at line {source_line}") from exc
-
-                        rows.append(row)
-                        events_count += 1
-
-                        if len(rows) >= _WRITE_BATCH_SIZE:
-                            writer = self._write_rows(
-                                writer=writer,
-                                rows=rows,
-                                target=temp_file,
-                            )
-
-                            rows = []
-
-            if rows:
-                source_size_bytes = sum(source_file.stat().st_size for source_file, _ in sources)
-
-                logger.debug(
-                    ("Materializing parquet group: partition={}, blobs={}, source_size_bytes={}"),
-                    partition,
-                    len(sources),
-                    source_size_bytes,
+                table = self._read_source_table(
+                    source_file=source_file,
+                    blob=blob,
                 )
-                writer = self._write_rows(
-                    writer=writer,
-                    rows=rows,
-                    target=temp_file,
-                )
+
+                if table.num_rows == 0:
+                    continue
+
+                events_count += table.num_rows
+
+                if writer is None:
+                    writer = pq.ParquetWriter(
+                        temp_file,
+                        EVENT_SCHEMA,
+                        compression="zstd",
+                    )
+
+                writer.write_table(table)
 
             if writer is None:
                 empty_table = pa.Table.from_pylist(
@@ -251,28 +264,132 @@ class ParquetMaterializer:
             blobs=tuple(blob for _, blob in sources),
         )
 
-    @staticmethod
-    def _write_rows(
+    def _read_source_table(
+        self,
         *,
-        writer: pq.ParquetWriter | None,
-        rows: list[dict],
-        target: Path,
-    ) -> pq.ParquetWriter:
-        table = pa.Table.from_pylist(
-            rows,
+        source_file: Path,
+        blob: BlobObject,
+    ) -> pa.Table:
+        content = source_file.read_bytes()
+
+        raw_lines: list[bytes] = []
+        source_lines: list[int] = []
+
+        for line_number, segment in enumerate(content.split(b"\n"), start=1):
+            if not segment.strip():
+                continue
+
+            raw_lines.append(segment)
+            source_lines.append(line_number)
+
+        if not raw_lines:
+            return pa.Table.from_pylist([], schema=EVENT_SCHEMA)
+
+        try:
+            return self._parse_vectorized(
+                content=content,
+                raw_lines=raw_lines,
+                source_lines=source_lines,
+                blob=blob,
+            )
+        except pa.lib.ArrowInvalid as exc:
+            logger.debug(
+                ("Vectorized parse failed, falling back to line-by-line parsing: blob={}, reason={}"),
+                blob.name,
+                exc,
+            )
+
+            return self._parse_fallback(
+                raw_lines=raw_lines,
+                source_lines=source_lines,
+                blob=blob,
+            )
+
+    @staticmethod
+    def _parse_vectorized(
+        *,
+        content: bytes,
+        raw_lines: list[bytes],
+        source_lines: list[int],
+        blob: BlobObject,
+    ) -> pa.Table:
+        parsed = pa_json.read_json(
+            pa.BufferReader(content),
+            parse_options=_RAW_PARSE_OPTIONS,
+        )
+
+        if parsed.num_rows != len(raw_lines):
+            raise pa.lib.ArrowInvalid(
+                f"Parsed row count mismatch for {blob.name}: "
+                f"expected {len(raw_lines)} non-blank lines, got {parsed.num_rows}"
+            )
+
+        user_id = pc.coalesce(
+            pc.struct_field(parsed["actor"], "user_id"),
+            pc.struct_field(parsed["attributes"], "user_id"),
+        )
+
+        organization_id = pc.coalesce(
+            pc.struct_field(parsed["actor"], "organization_id"),
+            pc.struct_field(parsed["attributes"], "organization_id"),
+        )
+
+        event_name = pc.coalesce(
+            pc.struct_field(parsed["event"], "name"),
+            parsed["event_name"],
+        )
+
+        category = pc.coalesce(
+            pc.struct_field(parsed["event"], "category"),
+            parsed["category"],
+        )
+
+        row_count = parsed.num_rows
+
+        raw_json_values = pc.utf8_rtrim(
+            pa.array(raw_lines, type=pa.binary()).cast(pa.string()),
+            characters="\r",
+        )
+
+        return pa.Table.from_arrays(
+            [
+                parsed["event_id"],
+                user_id,
+                organization_id,
+                event_name,
+                category,
+                parsed["timestamp"],
+                pa.array([blob.partition] * row_count, type=pa.string()),
+                pa.array([blob.file_name] * row_count, type=pa.string()),
+                pa.array(source_lines, type=pa.int64()),
+                raw_json_values,
+            ],
             schema=EVENT_SCHEMA,
         )
 
-        if writer is None:
-            writer = pq.ParquetWriter(
-                target,
-                EVENT_SCHEMA,
-                compression="zstd",
-            )
+    @staticmethod
+    def _parse_fallback(
+        *,
+        raw_lines: list[bytes],
+        source_lines: list[int],
+        blob: BlobObject,
+    ) -> pa.Table:
+        rows: list[dict] = []
 
-        writer.write_table(table)
+        for raw_line, source_line in zip(raw_lines, source_lines, strict=True):
+            try:
+                row = extract_indexed_event(
+                    raw_line,
+                    blob_partition=blob.partition,
+                    blob_name=blob.file_name,
+                    source_line=source_line,
+                )
+            except Exception as exc:
+                raise MaterializationError(f"Failed to parse {blob.name} at line {source_line}") from exc
 
-        return writer
+            rows.append(row)
+
+        return pa.Table.from_pylist(rows, schema=EVENT_SCHEMA)
 
     @staticmethod
     def _validate_sources(

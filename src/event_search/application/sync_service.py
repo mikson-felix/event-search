@@ -101,20 +101,21 @@ class SyncService:
                 skipped=skipped,
             )
 
-        sources: list[tuple[Path, BlobObject]] = []
+        temp_files = [self._temp_dir / blob.partition / blob.file_name for blob in missing_blobs]
 
         try:
-            for blob in missing_blobs:
-                temp_file = self._temp_dir / blob.partition / blob.file_name
+            self._download_all(
+                blobs=missing_blobs,
+                temp_files=temp_files,
+            )
 
-                self._source.download(blob, temp_file)
-
-                sources.append(
-                    (
-                        temp_file,
-                        blob,
-                    )
+            sources = list(
+                zip(
+                    temp_files,
+                    missing_blobs,
+                    strict=True,
                 )
+            )
 
             results = self._materializer.materialize(
                 partition=partition,
@@ -132,11 +133,28 @@ class SyncService:
             )
 
         finally:
-            for source_file, _ in sources:
-                source_file.unlink(missing_ok=True)
+            for temp_file in temp_files:
+                temp_file.unlink(missing_ok=True)
 
         return _PartitionSyncResult(
             discovered=len(blobs),
             materialized=len(missing_blobs),
             skipped=skipped,
         )
+
+    def _download_all(
+        self,
+        *,
+        blobs: list[BlobObject],
+        temp_files: list[Path],
+    ) -> None:
+        max_workers = min(len(blobs), self._concurrency)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            list(
+                executor.map(
+                    self._source.download,
+                    blobs,
+                    temp_files,
+                )
+            )

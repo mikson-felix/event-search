@@ -1,3 +1,5 @@
+import threading
+import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -44,14 +46,18 @@ def make_service(
 def test_rejects_invalid_concurrency(
     tmp_path: Path,
 ) -> None:
+    source = MagicMock()
+    manifest = MagicMock()
+    materializer = MagicMock()
+
     with pytest.raises(
         ValueError,
         match="concurrency",
     ):
         SyncService(
-            source=MagicMock(),
-            manifest=MagicMock(),
-            materializer=MagicMock(),
+            source=source,
+            manifest=manifest,
+            materializer=materializer,
             temp_dir=tmp_path,
             concurrency=0,
         )
@@ -383,3 +389,85 @@ def test_sync_aggregates_results_from_multiple_partitions(
     assert source.list_blobs.call_count == 2
     assert materializer.materialize.call_count == 2
     assert manifest.save.call_count == 2
+
+
+def test_downloads_missing_blobs_concurrently(
+    tmp_path: Path,
+) -> None:
+    source = MagicMock()
+    manifest = MagicMock()
+    materializer = MagicMock()
+
+    blobs = [make_blob(file_name=f"blob-{index}.ndjson") for index in range(4)]
+
+    source.list_blobs.return_value = blobs
+    manifest.is_materialized.return_value = False
+    materializer.materialize.return_value = []
+
+    barrier = threading.Barrier(len(blobs))
+
+    def download(
+        blob: BlobObject,
+        target: Path,
+    ) -> None:
+        # Only satisfied if all four downloads are in flight at once; a
+        # sequential implementation would time out and raise here.
+        barrier.wait(timeout=2)
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("{}", encoding="utf-8")
+
+    source.download.side_effect = download
+
+    service = make_service(
+        tmp_path=tmp_path,
+        source=source,
+        manifest=manifest,
+        materializer=materializer,
+        concurrency=len(blobs),
+    )
+
+    service.sync(["2026/09/10/08"])
+
+    assert source.download.call_count == len(blobs)
+
+
+def test_download_order_matches_missing_blobs_regardless_of_completion_order(
+    tmp_path: Path,
+) -> None:
+    source = MagicMock()
+    manifest = MagicMock()
+    materializer = MagicMock()
+
+    blobs = [make_blob(file_name=f"blob-{index}.ndjson") for index in range(3)]
+
+    source.list_blobs.return_value = blobs
+    manifest.is_materialized.return_value = False
+    materializer.materialize.return_value = []
+
+    def download(
+        blob: BlobObject,
+        target: Path,
+    ) -> None:
+        # First blob finishes last, proving result order does not depend on completion order.
+        if blob is blobs[0]:
+            time.sleep(0.05)
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("{}", encoding="utf-8")
+
+    source.download.side_effect = download
+
+    service = make_service(
+        tmp_path=tmp_path,
+        source=source,
+        manifest=manifest,
+        materializer=materializer,
+        concurrency=len(blobs),
+    )
+
+    service.sync(["2026/09/10/08"])
+
+    sources = materializer.materialize.call_args.kwargs["sources"]
+
+    assert [blob for _, blob in sources] == blobs
