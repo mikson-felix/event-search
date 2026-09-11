@@ -287,6 +287,7 @@ class ParquetMaterializer:
 
         try:
             return self._parse_vectorized(
+                content=content,
                 raw_lines=raw_lines,
                 source_lines=source_lines,
                 blob=blob,
@@ -307,16 +308,21 @@ class ParquetMaterializer:
     @staticmethod
     def _parse_vectorized(
         *,
+        content: bytes,
         raw_lines: list[bytes],
         source_lines: list[int],
         blob: BlobObject,
     ) -> pa.Table:
-        buffer = pa.py_buffer(b"\n".join(raw_lines))
-
         parsed = pa_json.read_json(
-            pa.BufferReader(buffer),
+            pa.BufferReader(content),
             parse_options=_RAW_PARSE_OPTIONS,
         )
+
+        if parsed.num_rows != len(raw_lines):
+            raise pa.lib.ArrowInvalid(
+                f"Parsed row count mismatch for {blob.name}: "
+                f"expected {len(raw_lines)} non-blank lines, got {parsed.num_rows}"
+            )
 
         user_id = pc.coalesce(
             pc.struct_field(parsed["actor"], "user_id"),
