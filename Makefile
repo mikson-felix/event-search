@@ -7,24 +7,25 @@ install:
 
 install-completion:
 	@SHELL_NAME=$$(basename "$$SHELL"); \
-	if [ "$$SHELL_NAME" = "zsh" ]; then \
-		mkdir -p "$$HOME/.zfunc"; \
-		_EVENT_SEARCH_COMPLETE=zsh_source uv run event-search \
-			> "$$HOME/.zfunc/_event-search"; \
-		echo "Installed zsh completion: $$HOME/.zfunc/_event-search"; \
-	elif [ "$$SHELL_NAME" = "bash" ]; then \
-		mkdir -p "$$HOME/.local/share/bash-completion/completions"; \
-		_EVENT_SEARCH_COMPLETE=bash_source uv run event-search \
-			> "$$HOME/.local/share/bash-completion/completions/event-search"; \
-		echo "Installed bash completion"; \
-	elif [ "$$SHELL_NAME" = "fish" ]; then \
-		mkdir -p "$$HOME/.config/fish/completions"; \
-		_EVENT_SEARCH_COMPLETE=fish_source uv run event-search \
-			> "$$HOME/.config/fish/completions/event-search.fish"; \
-		echo "Installed fish completion"; \
-	else \
-		echo "Shell completion skipped: unsupported shell '$$SHELL_NAME'"; \
-	fi
+	case "$$SHELL_NAME" in \
+		zsh|zsh.exe) \
+			mkdir -p "$$HOME/.zfunc"; \
+			_EVENT_SEARCH_COMPLETE=zsh_source uv run event-search \
+				> "$$HOME/.zfunc/_event-search"; \
+			echo "Installed zsh completion: $$HOME/.zfunc/_event-search" ;; \
+		bash|bash.exe) \
+			mkdir -p "$$HOME/.local/share/bash-completion/completions"; \
+			_EVENT_SEARCH_COMPLETE=bash_source uv run event-search \
+				> "$$HOME/.local/share/bash-completion/completions/event-search"; \
+			echo "Installed bash completion" ;; \
+		fish|fish.exe) \
+			mkdir -p "$$HOME/.config/fish/completions"; \
+			_EVENT_SEARCH_COMPLETE=fish_source uv run event-search \
+				> "$$HOME/.config/fish/completions/event-search.fish"; \
+			echo "Installed fish completion" ;; \
+		*) \
+			echo "Shell completion skipped: unsupported shell '$$SHELL_NAME'" ;; \
+	esac
 
 fmt:
 	uv run ruff check . --fix

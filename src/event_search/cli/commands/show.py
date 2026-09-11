@@ -1,7 +1,7 @@
 import click
 from click.shell_completion import CompletionItem
 
-from event_search.bootstrap import Application
+from event_search.bootstrap import Application, build_application
 
 
 def complete_event_id(
@@ -14,7 +14,10 @@ def complete_event_id(
     app: Application | None = context.obj
 
     if app is None:
-        return []
+        # Click's shell completion resolves the context chain without
+        # invoking group callbacks, so `cli()` never sets `context.obj`
+        # here. Build the application directly instead.
+        app = build_application()
 
     event_ids = app.search_service.complete_event_ids(
         prefix=incomplete,

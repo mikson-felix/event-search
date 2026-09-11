@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import click
+import pytest
 from click.shell_completion import CompletionItem
 from click.testing import CliRunner
 
@@ -141,7 +142,24 @@ def test_completion_returns_empty_list_when_nothing_matches() -> None:
     )
 
 
-def test_completion_does_not_fail_without_application() -> None:
+def test_completion_builds_application_when_context_has_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    search_service = MagicMock()
+
+    search_service.complete_event_ids.return_value = [
+        "event-001",
+    ]
+
+    application = SimpleNamespace(
+        search_service=search_service,
+    )
+
+    monkeypatch.setattr(
+        "event_search.cli.commands.show.build_application",
+        MagicMock(return_value=application),
+    )
+
     context = make_context(
         application=None,
     )
@@ -158,7 +176,14 @@ def test_completion_does_not_fail_without_application() -> None:
         "event-",
     )
 
-    assert result == []
+    assert [item.value for item in result] == [
+        "event-001",
+    ]
+
+    search_service.complete_event_ids.assert_called_once_with(
+        prefix="event-",
+        limit=20,
+    )
 
 
 def test_show_command_renders_event() -> None:
