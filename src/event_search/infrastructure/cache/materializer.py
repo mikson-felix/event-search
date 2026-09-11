@@ -270,16 +270,17 @@ class ParquetMaterializer:
         source_file: Path,
         blob: BlobObject,
     ) -> pa.Table:
+        content = source_file.read_bytes()
+
         raw_lines: list[bytes] = []
         source_lines: list[int] = []
 
-        with source_file.open("rb") as stream:
-            for line_number, raw_line in enumerate(stream, start=1):
-                if not raw_line.strip():
-                    continue
+        for line_number, segment in enumerate(content.split(b"\n"), start=1):
+            if not segment.strip():
+                continue
 
-                raw_lines.append(raw_line)
-                source_lines.append(line_number)
+            raw_lines.append(segment)
+            source_lines.append(line_number)
 
         if not raw_lines:
             return pa.Table.from_pylist([], schema=EVENT_SCHEMA)
@@ -310,7 +311,7 @@ class ParquetMaterializer:
         source_lines: list[int],
         blob: BlobObject,
     ) -> pa.Table:
-        buffer = pa.py_buffer(b"".join(raw_lines))
+        buffer = pa.py_buffer(b"\n".join(raw_lines))
 
         parsed = pa_json.read_json(
             pa.BufferReader(buffer),
@@ -339,7 +340,10 @@ class ParquetMaterializer:
 
         row_count = parsed.num_rows
 
-        raw_json_values = [raw_line.decode("utf-8").rstrip("\r\n") for raw_line in raw_lines]
+        raw_json_values = pc.utf8_rtrim(
+            pa.array(raw_lines, type=pa.binary()).cast(pa.string()),
+            characters="\r",
+        )
 
         return pa.Table.from_arrays(
             [
@@ -352,7 +356,7 @@ class ParquetMaterializer:
                 pa.array([blob.partition] * row_count, type=pa.string()),
                 pa.array([blob.file_name] * row_count, type=pa.string()),
                 pa.array(source_lines, type=pa.int64()),
-                pa.array(raw_json_values, type=pa.string()),
+                raw_json_values,
             ],
             schema=EVENT_SCHEMA,
         )
