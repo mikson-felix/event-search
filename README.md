@@ -1,4 +1,4 @@
-# Event Search
+<h1 align="center">Event Search</h1>
 
 <p align="center">
   <strong>Fast local search over immutable NDJSON event archives stored in Azure Blob Storage.</strong>
@@ -1135,8 +1135,8 @@ Example output:
 
 ```text
 ╭─ Event ───────────────────────────────────────────╮
-│ ID:     550e8400-e29b-41d4-a716-446655440000     │
-│ Source: 2026/09/09/08/events-001.ndjson          │
+│ ID:     550e8400-e29b-41d4-a716-446655440000      │
+│ Source: 2026/09/09/08/events-001.ndjson           │
 │ Line:   421                                       │
 ╰───────────────────────────────────────────────────╯
 
@@ -1758,25 +1758,25 @@ The project follows a lightweight ports-and-adapters approach without introducin
 ┌─────────────────────────────────────────────────────────────┐
 │                    Application Layer                        │
 │                                                             │
-│       SearchService     SyncService     TimeResolver         │
+│       SearchService     SyncService     TimeResolver        │
 └────────────────────────────┬────────────────────────────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                       Domain Ports                          │
 │                                                             │
-│ BlobSource          QueryEngine          Materializer        │
-│ ManifestRepository  SearchResultStore    EventDetailsReader  │
+│ BlobSource          QueryEngine          Materializer       │
+│ ManifestRepository  SearchResultStore    EventDetailsReader │
 └────────────────────────────┬────────────────────────────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                     Infrastructure                          │
 │                                                             │
-│ Azure Blob       SQLite       PyArrow       DuckDB           │
-│ source           metadata     materialize   analytics        │
-│                                 │             │               │
-│                                 └── Parquet ──┘               │
+│ Azure Blob       SQLite       PyArrow       DuckDB          │
+│ source           metadata     materialize   analytics       │
+│                                 │             │             │
+│                                 └── Parquet ──┘             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
