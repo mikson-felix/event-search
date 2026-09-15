@@ -87,7 +87,7 @@ def materialize_one(
         partition=blob.partition,
         sources=[
             (
-                source_file,
+                source_file.read_bytes(),
                 blob,
             ),
         ],
@@ -313,7 +313,7 @@ def test_invalid_ndjson_raises_materialization_error(
             partition=PARTITION,
             sources=[
                 (
-                    source_file,
+                    source_file.read_bytes(),
                     make_blob(),
                 )
             ],
@@ -337,11 +337,55 @@ def test_invalid_timestamp_raises_materialization_error(
             partition=PARTITION,
             sources=[
                 (
-                    source_file,
+                    source_file.read_bytes(),
                     make_blob(),
                 )
             ],
         )
+
+
+def test_failed_second_source_aborts_group_with_already_written_first_source(
+    tmp_path: Path,
+) -> None:
+    first_file = tmp_path / "first.ndjson"
+    second_file = tmp_path / "invalid.ndjson"
+
+    write_ndjson(
+        first_file,
+        [make_event(event_id="event-001")],
+    )
+
+    second_file.write_text(
+        "{invalid json}\n",
+        encoding="utf-8",
+    )
+
+    parquet_root = tmp_path / "parquet"
+
+    materializer = ParquetMaterializer(
+        parquet_root,
+        target_size_mb=128,
+    )
+
+    with pytest.raises(MaterializationError):
+        materializer.materialize(
+            partition=PARTITION,
+            sources=[
+                (
+                    first_file.read_bytes(),
+                    make_blob("first.ndjson"),
+                ),
+                (
+                    second_file.read_bytes(),
+                    make_blob("invalid.ndjson"),
+                ),
+            ],
+        )
+
+    output_dir = parquet_root / PARTITION
+
+    assert list(output_dir.glob("*.parquet")) == []
+    assert list(output_dir.glob("*.tmp")) == []
 
 
 def test_failed_materialization_does_not_create_final_parquet(
@@ -366,7 +410,7 @@ def test_failed_materialization_does_not_create_final_parquet(
             partition=PARTITION,
             sources=[
                 (
-                    source_file,
+                    source_file.read_bytes(),
                     make_blob(),
                 )
             ],
@@ -468,11 +512,11 @@ def test_materializes_multiple_sources_into_one_parquet(
         partition=PARTITION,
         sources=[
             (
-                first_file,
+                first_file.read_bytes(),
                 first_blob,
             ),
             (
-                second_file,
+                second_file.read_bytes(),
                 second_blob,
             ),
         ],
@@ -532,11 +576,11 @@ def test_splits_sources_by_target_size(
         partition=PARTITION,
         sources=[
             (
-                first_file,
+                first_file.read_bytes(),
                 first_blob,
             ),
             (
-                second_file,
+                second_file.read_bytes(),
                 second_blob,
             ),
         ],
@@ -588,7 +632,7 @@ def test_rejects_sources_from_other_partition(
             partition=PARTITION,
             sources=[
                 (
-                    source_file,
+                    source_file.read_bytes(),
                     blob,
                 )
             ],

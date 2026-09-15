@@ -18,8 +18,6 @@ class CacheSettings(BaseModel):
 
     database_path: Path = Path(".cache/event_search.sqlite")
 
-    temp_dir: Path = Path(".cache/tmp")
-
 
 class SearchSettings(BaseModel):
     default_limit: int = 100
@@ -28,6 +26,7 @@ class SearchSettings(BaseModel):
 
 class SyncSettings(BaseModel):
     concurrency: int = 4
+    download_concurrency: int = 16
     target_parquet_size_mb: int = 128
 
 

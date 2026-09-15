@@ -5,6 +5,7 @@ from io import StringIO
 from pathlib import Path
 
 from rich.console import Console
+from rich.status import Status
 
 from event_search.domain.models import (
     CacheStatus,
@@ -83,6 +84,45 @@ def test_render_range_outputs_local_and_utc_ranges() -> None:
     assert "2026-09-10 11:30:00 UTC" in output
 
 
+def test_track_partitions_renders_progress_bar_advanced_to_completion() -> None:
+    renderer, stream = make_renderer()
+
+    with renderer.track_partitions(2) as advance:
+        advance()
+        advance()
+
+    output = normalize_output(stream)
+
+    assert "Syncing partitions" in output
+    assert "2/2" in output
+
+
+def test_track_partitions_handles_zero_total() -> None:
+    renderer, stream = make_renderer()
+
+    with renderer.track_partitions(0):
+        pass
+
+    output = normalize_output(stream)
+
+    assert "Syncing partitions" in output
+
+
+def test_status_returns_usable_context_manager() -> None:
+    renderer, _ = make_renderer()
+
+    status = renderer.status("Searching events…")
+
+    assert isinstance(status, Status)
+
+    entered = False
+
+    with status:
+        entered = True
+
+    assert entered
+
+
 def test_render_results_outputs_table_with_event_data() -> None:
     renderer, stream = make_renderer()
 
@@ -119,7 +159,7 @@ def test_render_results_outputs_table_with_event_data() -> None:
     assert "Organization ID" in output
     assert "Event" in output
     assert "Category" in output
-    assert "Timestamp" in output
+    assert "Timestamp (UTC)" in output
 
     assert "event-123" in output
     assert "user-123" in output
@@ -128,7 +168,8 @@ def test_render_results_outputs_table_with_event_data() -> None:
     assert "VERY_LONG_EVENT_NAM…" in output
     assert "VERY_LONG…" in output
 
-    assert "2026-09-10T12:30:00+00:00" in output
+    assert "2026-09-10 12:30:00" in output
+    assert "2026-09-10T12:30:00+00:00" not in output
 
     assert "Path" not in output
     assert "Blob" not in output
@@ -269,6 +310,18 @@ def test_render_status_outputs_dash_without_materialization_time() -> None:
     assert "Cached events" in output
     assert "0.0 B" in output
     assert "-" in output
+
+
+def test_render_clean_outputs_confirmation() -> None:
+    renderer, stream = make_renderer()
+
+    renderer.render_clean()
+
+    output = normalize_output(stream)
+
+    assert "Local cache cleared" in output
+    assert "Parquet" in output
+    assert "SQLite" in output
 
 
 def test_render_sync_outputs_sync_statistics() -> None:

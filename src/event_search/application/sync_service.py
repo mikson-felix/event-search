@@ -1,8 +1,10 @@
+from collections.abc import Callable, Iterator
 from concurrent.futures import (
+    Future,
     ThreadPoolExecutor,
+    as_completed,
 )
 from dataclasses import dataclass
-from pathlib import Path
 
 from loguru import logger
 
@@ -31,21 +33,26 @@ class SyncService:
         source: BlobSource,
         manifest: ManifestRepository,
         materializer: Materializer,
-        temp_dir: Path,
         concurrency: int,
+        download_concurrency: int,
     ) -> None:
         if concurrency < 1:
             raise ValueError("concurrency must be greater than zero")
 
+        if download_concurrency < 1:
+            raise ValueError("download_concurrency must be greater than zero")
+
         self._source = source
         self._manifest = manifest
         self._materializer = materializer
-        self._temp_dir = temp_dir.resolve()
         self._concurrency = concurrency
+        self._download_concurrency = download_concurrency
 
     def sync(
         self,
         partitions: list[str],
+        *,
+        on_partition_synced: Callable[[], None] | None = None,
     ) -> SyncResult:
         if not partitions:
             return SyncResult(
@@ -54,20 +61,29 @@ class SyncService:
                 skipped=0,
             )
 
+        discovered = 0
+        materialized = 0
+        skipped = 0
+
         with ThreadPoolExecutor(
             max_workers=self._concurrency,
         ) as executor:
-            results = list(
-                executor.map(
-                    self._sync_partition,
-                    partitions,
-                )
-            )
+            futures = [executor.submit(self._sync_partition, partition) for partition in partitions]
+
+            for future in as_completed(futures):
+                result = future.result()
+
+                discovered += result.discovered
+                materialized += result.materialized
+                skipped += result.skipped
+
+                if on_partition_synced is not None:
+                    on_partition_synced()
 
         return SyncResult(
-            discovered=sum(result.discovered for result in results),
-            materialized=sum(result.materialized for result in results),
-            skipped=sum(result.skipped for result in results),
+            discovered=discovered,
+            materialized=materialized,
+            skipped=skipped,
         )
 
     def _sync_partition(
@@ -79,7 +95,7 @@ class SyncService:
             partition,
         )
         blobs = self._source.list_blobs(partition)
-        missing_blobs = [blob for blob in blobs if not self._manifest.is_materialized(blob)]
+        missing_blobs = self._manifest.filter_missing(blobs)
         skipped = len(blobs) - len(missing_blobs)
         logger.debug(
             ("Sync partition state: partition={}, discovered={}, cached={}, missing={}"),
@@ -101,40 +117,22 @@ class SyncService:
                 skipped=skipped,
             )
 
-        temp_files = [self._temp_dir / blob.partition / blob.file_name for blob in missing_blobs]
+        sources = self._download_pipeline(missing_blobs)
 
-        try:
-            self._download_all(
-                blobs=missing_blobs,
-                temp_files=temp_files,
-            )
+        results = self._materializer.materialize(
+            partition=partition,
+            sources=sources,
+        )
 
-            sources = list(
-                zip(
-                    temp_files,
-                    missing_blobs,
-                    strict=True,
-                )
-            )
+        for result in results:
+            self._manifest.save(result)
 
-            results = self._materializer.materialize(
-                partition=partition,
-                sources=sources,
-            )
-
-            for result in results:
-                self._manifest.save(result)
-
-            logger.debug(
-                ("Partition materialized: partition={}, source_blobs={}, parquet_files={}"),
-                partition,
-                len(missing_blobs),
-                len(results),
-            )
-
-        finally:
-            for temp_file in temp_files:
-                temp_file.unlink(missing_ok=True)
+        logger.debug(
+            ("Partition materialized: partition={}, source_blobs={}, parquet_files={}"),
+            partition,
+            len(missing_blobs),
+            len(results),
+        )
 
         return _PartitionSyncResult(
             discovered=len(blobs),
@@ -142,19 +140,36 @@ class SyncService:
             skipped=skipped,
         )
 
-    def _download_all(
+    def _download_pipeline(
         self,
-        *,
         blobs: list[BlobObject],
-        temp_files: list[Path],
-    ) -> None:
-        max_workers = min(len(blobs), self._concurrency)
+    ) -> Iterator[tuple[bytes, BlobObject]]:
+        # Downloads are submitted here, eagerly, so they start regardless of
+        # whether/how fast the returned iterator is consumed. Only the
+        # blocking wait for each result is deferred to iteration, which lets
+        # a materializer parse earlier blobs while later ones are still
+        # downloading in the background.
+        max_workers = min(len(blobs), self._download_concurrency)
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            list(
-                executor.map(
-                    self._source.download,
-                    blobs,
-                    temp_files,
-                )
-            )
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+
+        futures = [executor.submit(self._source.download, blob) for blob in blobs]
+
+        return self._iter_downloaded(
+            executor=executor,
+            futures=futures,
+            blobs=blobs,
+        )
+
+    @staticmethod
+    def _iter_downloaded(
+        *,
+        executor: ThreadPoolExecutor,
+        futures: list[Future[bytes]],
+        blobs: list[BlobObject],
+    ) -> Iterator[tuple[bytes, BlobObject]]:
+        try:
+            for future, blob in zip(futures, blobs, strict=True):
+                yield future.result(), blob
+        finally:
+            executor.shutdown(wait=True)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 from click.testing import CliRunner
 
@@ -109,7 +109,8 @@ def test_search_uses_default_limit_when_limit_is_omitted() -> None:
     app.sync_service.sync.assert_called_once_with(
         [
             "2026/09/10/10",
-        ]
+        ],
+        on_partition_synced=ANY,
     )
 
     app.search_service.search.assert_called_once()
@@ -391,7 +392,7 @@ def test_search_syncs_before_querying() -> None:
 
     calls: list[str] = []
 
-    app.sync_service.sync.side_effect = lambda value: calls.append("sync")
+    app.sync_service.sync.side_effect = lambda value, on_partition_synced=None: calls.append("sync")
 
     app.search_service.search.side_effect = lambda **kwargs: (
         calls.append("search"),

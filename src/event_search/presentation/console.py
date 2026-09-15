@@ -1,6 +1,17 @@
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+
 from rich.console import Console
 from rich.json import JSON
 from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    TextColumn,
+    TimeElapsedColumn,
+)
+from rich.status import Status
 from rich.table import Table
 from rich.text import Text
 
@@ -48,6 +59,31 @@ class ConsoleRenderer:
 
         self._console.print()
 
+    @contextmanager
+    def track_partitions(
+        self,
+        total: int,
+    ) -> Iterator[Callable[[], None]]:
+        with Progress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            console=self._console,
+        ) as progress:
+            task_id = progress.add_task(
+                "Syncing partitions",
+                total=total,
+            )
+
+            yield lambda: progress.advance(task_id)
+
+    def status(
+        self,
+        message: str,
+    ) -> Status:
+        return self._console.status(message)
+
     def render_results(
         self,
         results: list[SearchSummary],
@@ -76,14 +112,16 @@ class ConsoleRenderer:
 
         table.add_column(
             "Event",
+            ratio=1,
         )
 
         table.add_column(
             "Category",
+            ratio=1,
         )
 
         table.add_column(
-            "Timestamp",
+            "Timestamp (UTC)",
             no_wrap=True,
         )
 
@@ -91,10 +129,10 @@ class ConsoleRenderer:
             table.add_row(
                 result.event_id,
                 result.user_id or "-",
-                result.organization_id or "-",
-                self._shorten(result.event_name or "-", length=20),
-                self._shorten(result.category or "-", length=10),
-                result.timestamp.isoformat(),
+                self._shorten(result.organization_id, length=20),
+                self._shorten(result.event_name, length=20),
+                self._shorten(result.category, length=10),
+                result.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
             )
 
         self._console.print(table)
@@ -180,6 +218,11 @@ class ConsoleRenderer:
             "cached: "
             f"[cyan]{result.skipped}[/]"
         )
+
+    def render_clean(
+        self,
+    ) -> None:
+        self._console.print("[green]Local cache cleared.[/] Parquet files and the SQLite database were removed.")
 
     @staticmethod
     def _format_size(

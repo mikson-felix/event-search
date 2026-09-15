@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from pathlib import Path
 from uuid import uuid4
 
@@ -108,6 +109,87 @@ _RAW_PARSE_OPTIONS = pa_json.ParseOptions(
 )
 
 
+class _MaterializationGroup:
+    """Accumulates parsed sources into a single Parquet output file.
+
+    Sources are added one at a time as they become available, so a group can
+    be filled while earlier sources in the same partition are still being
+    downloaded - callers are not required to have every source in hand
+    upfront.
+    """
+
+    def __init__(
+        self,
+        output_file: Path,
+        temp_file: Path,
+    ) -> None:
+        self.output_file = output_file
+        self.temp_file = temp_file
+        self.size_bytes = 0
+
+        self._writer: pq.ParquetWriter | None = None
+        self._events_count = 0
+        self._blobs: list[BlobObject] = []
+
+    def add(
+        self,
+        table: pa.Table,
+        blob: BlobObject,
+        source_size: int,
+    ) -> None:
+        if table.num_rows > 0:
+            if self._writer is None:
+                self._writer = pq.ParquetWriter(
+                    self.temp_file,
+                    EVENT_SCHEMA,
+                    compression="zstd",
+                )
+
+            self._writer.write_table(table)
+            self._events_count += table.num_rows
+
+        self._blobs.append(blob)
+        self.size_bytes += source_size
+
+    def finalize(self) -> MaterializationResult:
+        if self._writer is None:
+            empty_table = pa.Table.from_pylist(
+                [],
+                schema=EVENT_SCHEMA,
+            )
+
+            pq.write_table(
+                empty_table,
+                self.temp_file,
+                compression="zstd",
+            )
+        else:
+            self._writer.close()
+            self._writer = None
+
+        self.temp_file.replace(self.output_file)
+
+        logger.debug(
+            ("Parquet created: path={}, blobs={}, events={}, parquet_size_bytes={}"),
+            self.output_file,
+            len(self._blobs),
+            self._events_count,
+            self.output_file.stat().st_size,
+        )
+
+        return MaterializationResult(
+            path=self.output_file,
+            events_count=self._events_count,
+            blobs=tuple(self._blobs),
+        )
+
+    def abort(self) -> None:
+        if self._writer is not None:
+            self._writer.close()
+
+        self.temp_file.unlink(missing_ok=True)
+
+
 class ParquetMaterializer:
     def __init__(
         self,
@@ -125,71 +207,53 @@ class ParquetMaterializer:
         self,
         *,
         partition: str,
-        sources: list[tuple[Path, BlobObject]],
+        sources: Iterable[tuple[bytes, BlobObject]],
     ) -> list[MaterializationResult]:
-        if not sources:
-            return []
+        results: list[MaterializationResult] = []
+        group: _MaterializationGroup | None = None
 
-        self._validate_sources(
-            partition=partition,
-            sources=sources,
-        )
+        try:
+            for content, blob in sources:
+                if blob.partition != partition:
+                    raise ValueError("All blobs must belong to the requested partition")
 
-        groups = self._group_sources(sources)
-        logger.debug(
-            ("Materialization plan: partition={}, source_blobs={}, groups={}"),
-            partition,
-            len(sources),
-            len(groups),
-        )
+                source_size = len(content)
 
-        return [
-            self._materialize_group(
-                partition=partition,
-                sources=group,
-            )
-            for group in groups
-        ]
+                if group is not None and group.size_bytes + source_size > self._target_size_bytes:
+                    results.append(group.finalize())
+                    group = None
 
-    def _group_sources(
-        self,
-        sources: list[tuple[Path, BlobObject]],
-    ) -> list[list[tuple[Path, BlobObject]]]:
-        groups: list[list[tuple[Path, BlobObject]]] = []
+                if group is None:
+                    group = self._start_group(partition)
 
-        current_group: list[tuple[Path, BlobObject]] = []
-
-        current_size = 0
-
-        for source_file, blob in sources:
-            source_size = source_file.stat().st_size
-
-            if current_group and current_size + source_size > self._target_size_bytes:
-                groups.append(current_group)
-
-                current_group = []
-                current_size = 0
-
-            current_group.append(
-                (
-                    source_file,
-                    blob,
+                table = self._read_source_table(
+                    content=content,
+                    blob=blob,
                 )
-            )
 
-            current_size += source_size
+                group.add(table, blob, source_size)
 
-        if current_group:
-            groups.append(current_group)
+            if group is not None:
+                results.append(group.finalize())
 
-        return groups
+        except Exception:
+            if group is not None:
+                group.abort()
 
-    def _materialize_group(
+            raise
+
+        logger.debug(
+            "Materialization complete: partition={}, groups={}",
+            partition,
+            len(results),
+        )
+
+        return results
+
+    def _start_group(
         self,
-        *,
         partition: str,
-        sources: list[tuple[Path, BlobObject]],
-    ) -> MaterializationResult:
+    ) -> _MaterializationGroup:
         output_dir = self._parquet_root / partition
 
         output_dir.mkdir(
@@ -201,77 +265,14 @@ class ParquetMaterializer:
 
         temp_file = Path(f"{output_file}.tmp")
 
-        events_count = 0
-        writer: pq.ParquetWriter | None = None
-
-        try:
-            for source_file, blob in sources:
-                table = self._read_source_table(
-                    source_file=source_file,
-                    blob=blob,
-                )
-
-                if table.num_rows == 0:
-                    continue
-
-                events_count += table.num_rows
-
-                if writer is None:
-                    writer = pq.ParquetWriter(
-                        temp_file,
-                        EVENT_SCHEMA,
-                        compression="zstd",
-                    )
-
-                writer.write_table(table)
-
-            if writer is None:
-                empty_table = pa.Table.from_pylist(
-                    [],
-                    schema=EVENT_SCHEMA,
-                )
-
-                pq.write_table(
-                    empty_table,
-                    temp_file,
-                    compression="zstd",
-                )
-
-            else:
-                writer.close()
-                writer = None
-
-            temp_file.replace(output_file)
-            logger.debug(
-                ("Parquet created: path={}, blobs={}, events={}, parquet_size_bytes={}"),
-                output_file,
-                len(sources),
-                events_count,
-                output_file.stat().st_size,
-            )
-        except Exception:
-            if writer is not None:
-                writer.close()
-
-            raise
-
-        finally:
-            temp_file.unlink(missing_ok=True)
-
-        return MaterializationResult(
-            path=output_file,
-            events_count=events_count,
-            blobs=tuple(blob for _, blob in sources),
-        )
+        return _MaterializationGroup(output_file, temp_file)
 
     def _read_source_table(
         self,
         *,
-        source_file: Path,
+        content: bytes,
         blob: BlobObject,
     ) -> pa.Table:
-        content = source_file.read_bytes()
-
         raw_lines: list[bytes] = []
         source_lines: list[int] = []
 
@@ -390,13 +391,3 @@ class ParquetMaterializer:
             rows.append(row)
 
         return pa.Table.from_pylist(rows, schema=EVENT_SCHEMA)
-
-    @staticmethod
-    def _validate_sources(
-        *,
-        partition: str,
-        sources: list[tuple[Path, BlobObject]],
-    ) -> None:
-        for _, blob in sources:
-            if blob.partition != partition:
-                raise ValueError("All blobs must belong to the requested partition")

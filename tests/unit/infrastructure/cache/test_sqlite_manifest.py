@@ -105,15 +105,25 @@ def test_multiple_blobs_reference_same_parquet(
     assert second.parquet_path == parquet_path.resolve()
 
 
-def test_is_materialized_returns_false_when_entry_missing(
+def test_filter_missing_returns_empty_list_for_empty_input(
     tmp_path: Path,
 ) -> None:
     repository = SQLiteManifestRepository(tmp_path / "event_search.sqlite")
 
-    assert repository.is_materialized(make_blob()) is False
+    assert repository.filter_missing([]) == []
 
 
-def test_is_materialized_returns_true_when_parquet_exists(
+def test_filter_missing_includes_blob_when_entry_missing(
+    tmp_path: Path,
+) -> None:
+    repository = SQLiteManifestRepository(tmp_path / "event_search.sqlite")
+
+    blob = make_blob()
+
+    assert repository.filter_missing([blob]) == [blob]
+
+
+def test_filter_missing_excludes_blob_when_parquet_exists(
     tmp_path: Path,
 ) -> None:
     repository = SQLiteManifestRepository(tmp_path / "event_search.sqlite")
@@ -130,10 +140,10 @@ def test_is_materialized_returns_true_when_parquet_exists(
         )
     )
 
-    assert repository.is_materialized(blob) is True
+    assert repository.filter_missing([blob]) == []
 
 
-def test_is_materialized_returns_false_when_parquet_deleted(
+def test_filter_missing_includes_blob_when_parquet_deleted(
     tmp_path: Path,
 ) -> None:
     repository = SQLiteManifestRepository(tmp_path / "event_search.sqlite")
@@ -152,7 +162,28 @@ def test_is_materialized_returns_false_when_parquet_deleted(
 
     parquet_path.unlink()
 
-    assert repository.is_materialized(blob) is False
+    assert repository.filter_missing([blob]) == [blob]
+
+
+def test_filter_missing_batches_lookup_for_mixed_blobs(
+    tmp_path: Path,
+) -> None:
+    repository = SQLiteManifestRepository(tmp_path / "event_search.sqlite")
+
+    cached_blob = make_blob("cached.ndjson")
+    missing_blob = make_blob("missing.ndjson")
+
+    parquet_path = tmp_path / "part.parquet"
+    parquet_path.write_bytes(b"data")
+
+    repository.save(
+        make_result(
+            path=parquet_path,
+            blobs=(cached_blob,),
+        )
+    )
+
+    assert repository.filter_missing([cached_blob, missing_blob]) == [missing_blob]
 
 
 def test_save_updates_existing_blob_to_new_parquet(

@@ -636,12 +636,12 @@ EVENT_SEARCH_AZURE__FOLDER_NAME=activity-logs
 
 EVENT_SEARCH_CACHE__PARQUET_DIR=.cache/parquet
 EVENT_SEARCH_CACHE__DATABASE_PATH=.cache/event_search.sqlite
-EVENT_SEARCH_CACHE__TEMP_DIR=.cache/tmp
 
 EVENT_SEARCH_SEARCH__DEFAULT_LIMIT=100
 EVENT_SEARCH_SEARCH__MAX_LIMIT=10000
 
 EVENT_SEARCH_SYNC__CONCURRENCY=4
+EVENT_SEARCH_SYNC__DOWNLOAD_CONCURRENCY=16
 EVENT_SEARCH_SYNC__TARGET_PARQUET_SIZE_MB=128
 
 EVENT_SEARCH_LOGGING__LEVEL=INFO
@@ -698,20 +698,16 @@ The application does not create, modify, or delete Azure blobs.
 ```dotenv
 EVENT_SEARCH_CACHE__PARQUET_DIR=.cache/parquet
 EVENT_SEARCH_CACHE__DATABASE_PATH=.cache/event_search.sqlite
-EVENT_SEARCH_CACHE__TEMP_DIR=.cache/tmp
 ```
 
 The SQLite database stores control-plane metadata.
 
 Parquet contains event data.
 
-Temporary downloaded NDJSON files are stored under:
+Downloaded NDJSON blobs are kept in memory and parsed directly; nothing is staged to disk before materialization.
 
-```text
-.cache/tmp
-```
-
-and deleted after materialization.
+Both paths can be wiped with `event-search clean` (see [`clean`](#clean)) to force a full rebuild from Azure Blob
+Storage.
 
 ---
 
@@ -730,10 +726,15 @@ These control the default and maximum number of returned search rows.
 
 ```dotenv
 EVENT_SEARCH_SYNC__CONCURRENCY=4
+EVENT_SEARCH_SYNC__DOWNLOAD_CONCURRENCY=16
 EVENT_SEARCH_SYNC__TARGET_PARQUET_SIZE_MB=128
 ```
 
 `CONCURRENCY` controls how many UTC-hour partitions can be synchronized simultaneously.
+
+`DOWNLOAD_CONCURRENCY` controls how many blobs are downloaded in parallel within a single partition. Downloads are
+I/O-bound, so this can be set well above `CONCURRENCY` without adding CPU load - it mainly trades off against how
+many concurrent connections your network/Azure account should handle.
 
 For example:
 
@@ -806,7 +807,7 @@ Credentials such as SAS tokens should never be logged.
 
 # CLI
 
-The application exposes four commands:
+The application exposes five commands:
 
 ```text
 event-search
@@ -814,7 +815,8 @@ event-search
 ├── search    Search events
 ├── show      Show raw event JSON
 ├── sync      Synchronize the local cache
-└── status    Show local cache statistics
+├── status    Show local cache statistics
+└── clean     Remove the local Parquet cache and SQLite database
 ```
 
 Global options:
@@ -1377,6 +1379,43 @@ Azure Blob Storage is not accessed.
 
 ---
 
+# `clean`
+
+Remove the local Parquet cache and the local SQLite database.
+
+```bash
+event-search clean
+```
+
+```text
+This will delete the local Parquet cache and SQLite database. Continue? [y/N]:
+```
+
+Skip the confirmation prompt for scripted/non-interactive use:
+
+```bash
+event-search clean --yes
+```
+
+`clean` deletes:
+
+- The entire Parquet cache directory (`EVENT_SEARCH_CACHE__PARQUET_DIR`).
+- The SQLite database file (`EVENT_SEARCH_CACHE__DATABASE_PATH`), including its `-wal`/`-shm` sidecar files.
+
+```text
+event-search clean
+        │
+        ▼
+      SQLite
+        +
+ local filesystem
+```
+
+Azure Blob Storage is not accessed and nothing is deleted there - this only removes the local cache. The next
+`sync` or `search` rebuilds it from scratch.
+
+---
+
 # `--version`
 
 Display the installed application version:
@@ -1878,26 +1917,43 @@ This allows Event Search to detect new immutable blobs while avoiding unnecessar
 
 # Concurrency Model
 
-Synchronization concurrency is partition-based.
+Synchronization concurrency has two independent levels: partitions and, within each partition, blob downloads.
 
 ```text
-ThreadPoolExecutor
+ThreadPoolExecutor (CONCURRENCY)
         │
-        ├── worker 1 → 2026/09/09/08
-        ├── worker 2 → 2026/09/09/09
-        ├── worker 3 → 2026/09/09/10
-        └── worker 4 → 2026/09/09/11
+        ├── worker 1 → 2026/09/09/08 ── ThreadPoolExecutor (DOWNLOAD_CONCURRENCY)
+        │                                       ├── download blob 1
+        │                                       ├── download blob 2
+        │                                       └── download blob N
+        ├── worker 2 → 2026/09/09/09 ── ...
+        ├── worker 3 → 2026/09/09/10 ── ...
+        └── worker 4 → 2026/09/09/11 ── ...
 ```
 
-A single worker processes one UTC-hour partition.
+A single partition-level worker processes one UTC-hour partition: it lists blobs, downloads the missing ones, and
+materializes them into Parquet.
 
-The concurrency level is configured using:
+The two levels are configured independently:
 
 ```dotenv
 EVENT_SEARCH_SYNC__CONCURRENCY=4
+EVENT_SEARCH_SYNC__DOWNLOAD_CONCURRENCY=16
 ```
 
+They are deliberately separate. `CONCURRENCY` bounds how much materialization (CPU-bound JSON parsing and Parquet
+writing) runs at once, while `DOWNLOAD_CONCURRENCY` bounds how many blob downloads (I/O-bound) run at once *within*
+a single partition. A partition with many blobs is not limited by the partition-level concurrency for its downloads -
+raising `DOWNLOAD_CONCURRENCY` speeds up exactly that case without spawning more CPU-bound materialization work in
+parallel.
+
 This improves Azure listing, download, and materialization throughput without introducing async infrastructure into the CLI application.
+
+Within a partition, downloading and materialization are pipelined rather than sequential phases: as soon as one blob
+finishes downloading, `ParquetMaterializer` starts parsing and writing it while the remaining blobs in that partition
+are still downloading in the background. This overlap is most effective when a partition has more blobs than
+`DOWNLOAD_CONCURRENCY` (multiple download "waves") - for partitions with few blobs it has little effect, since there
+is nothing left downloading to overlap with.
 
 ---
 
