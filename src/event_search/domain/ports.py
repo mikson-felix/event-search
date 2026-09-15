@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Protocol
 
 from .models import (
@@ -23,8 +22,7 @@ class BlobSource(Protocol):
     def download(
         self,
         blob: BlobObject,
-        target: Path,
-    ) -> None: ...
+    ) -> bytes: ...
 
 
 class ManifestRepository(Protocol):
@@ -33,10 +31,10 @@ class ManifestRepository(Protocol):
         blob_name: str,
     ) -> ManifestEntry | None: ...
 
-    def is_materialized(
+    def filter_missing(
         self,
-        blob: BlobObject,
-    ) -> bool: ...
+        blobs: list[BlobObject],
+    ) -> list[BlobObject]: ...
 
     def save(
         self,
@@ -53,7 +51,7 @@ class Materializer(Protocol):
         self,
         *,
         partition: str,
-        sources: list[tuple[Path, BlobObject]],
+        sources: list[tuple[bytes, BlobObject]],
     ) -> list[MaterializationResult]: ...
 
 

@@ -636,7 +636,6 @@ EVENT_SEARCH_AZURE__FOLDER_NAME=activity-logs
 
 EVENT_SEARCH_CACHE__PARQUET_DIR=.cache/parquet
 EVENT_SEARCH_CACHE__DATABASE_PATH=.cache/event_search.sqlite
-EVENT_SEARCH_CACHE__TEMP_DIR=.cache/tmp
 
 EVENT_SEARCH_SEARCH__DEFAULT_LIMIT=100
 EVENT_SEARCH_SEARCH__MAX_LIMIT=10000
@@ -698,20 +697,13 @@ The application does not create, modify, or delete Azure blobs.
 ```dotenv
 EVENT_SEARCH_CACHE__PARQUET_DIR=.cache/parquet
 EVENT_SEARCH_CACHE__DATABASE_PATH=.cache/event_search.sqlite
-EVENT_SEARCH_CACHE__TEMP_DIR=.cache/tmp
 ```
 
 The SQLite database stores control-plane metadata.
 
 Parquet contains event data.
 
-Temporary downloaded NDJSON files are stored under:
-
-```text
-.cache/tmp
-```
-
-and deleted after materialization.
+Downloaded NDJSON blobs are kept in memory and parsed directly; nothing is staged to disk before materialization.
 
 ---
 

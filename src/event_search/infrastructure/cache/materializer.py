@@ -125,7 +125,7 @@ class ParquetMaterializer:
         self,
         *,
         partition: str,
-        sources: list[tuple[Path, BlobObject]],
+        sources: list[tuple[bytes, BlobObject]],
     ) -> list[MaterializationResult]:
         if not sources:
             return []
@@ -153,16 +153,16 @@ class ParquetMaterializer:
 
     def _group_sources(
         self,
-        sources: list[tuple[Path, BlobObject]],
-    ) -> list[list[tuple[Path, BlobObject]]]:
-        groups: list[list[tuple[Path, BlobObject]]] = []
+        sources: list[tuple[bytes, BlobObject]],
+    ) -> list[list[tuple[bytes, BlobObject]]]:
+        groups: list[list[tuple[bytes, BlobObject]]] = []
 
-        current_group: list[tuple[Path, BlobObject]] = []
+        current_group: list[tuple[bytes, BlobObject]] = []
 
         current_size = 0
 
-        for source_file, blob in sources:
-            source_size = source_file.stat().st_size
+        for content, blob in sources:
+            source_size = len(content)
 
             if current_group and current_size + source_size > self._target_size_bytes:
                 groups.append(current_group)
@@ -172,7 +172,7 @@ class ParquetMaterializer:
 
             current_group.append(
                 (
-                    source_file,
+                    content,
                     blob,
                 )
             )
@@ -188,7 +188,7 @@ class ParquetMaterializer:
         self,
         *,
         partition: str,
-        sources: list[tuple[Path, BlobObject]],
+        sources: list[tuple[bytes, BlobObject]],
     ) -> MaterializationResult:
         output_dir = self._parquet_root / partition
 
@@ -205,9 +205,9 @@ class ParquetMaterializer:
         writer: pq.ParquetWriter | None = None
 
         try:
-            for source_file, blob in sources:
+            for content, blob in sources:
                 table = self._read_source_table(
-                    source_file=source_file,
+                    content=content,
                     blob=blob,
                 )
 
@@ -267,11 +267,9 @@ class ParquetMaterializer:
     def _read_source_table(
         self,
         *,
-        source_file: Path,
+        content: bytes,
         blob: BlobObject,
     ) -> pa.Table:
-        content = source_file.read_bytes()
-
         raw_lines: list[bytes] = []
         source_lines: list[int] = []
 
@@ -395,7 +393,7 @@ class ParquetMaterializer:
     def _validate_sources(
         *,
         partition: str,
-        sources: list[tuple[Path, BlobObject]],
+        sources: list[tuple[bytes, BlobObject]],
     ) -> None:
         for _, blob in sources:
             if blob.partition != partition:

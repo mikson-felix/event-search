@@ -76,14 +76,16 @@ class ConsoleRenderer:
 
         table.add_column(
             "Event",
+            ratio=1,
         )
 
         table.add_column(
             "Category",
+            ratio=1,
         )
 
         table.add_column(
-            "Timestamp",
+            "Timestamp (UTC)",
             no_wrap=True,
         )
 
@@ -91,10 +93,10 @@ class ConsoleRenderer:
             table.add_row(
                 result.event_id,
                 result.user_id or "-",
-                result.organization_id or "-",
-                self._shorten(result.event_name or "-", length=20),
-                self._shorten(result.category or "-", length=10),
-                result.timestamp.isoformat(),
+                self._shorten(result.organization_id, length=20),
+                self._shorten(result.event_name, length=20),
+                self._shorten(result.category, length=10),
+                result.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
             )
 
         self._console.print(table)

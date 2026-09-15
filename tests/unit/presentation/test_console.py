@@ -119,7 +119,7 @@ def test_render_results_outputs_table_with_event_data() -> None:
     assert "Organization ID" in output
     assert "Event" in output
     assert "Category" in output
-    assert "Timestamp" in output
+    assert "Timestamp (UTC)" in output
 
     assert "event-123" in output
     assert "user-123" in output
@@ -128,7 +128,8 @@ def test_render_results_outputs_table_with_event_data() -> None:
     assert "VERY_LONG_EVENT_NAM…" in output
     assert "VERY_LONG…" in output
 
-    assert "2026-09-10T12:30:00+00:00" in output
+    assert "2026-09-10 12:30:00" in output
+    assert "2026-09-10T12:30:00+00:00" not in output
 
     assert "Path" not in output
     assert "Blob" not in output

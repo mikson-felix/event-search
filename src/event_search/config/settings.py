@@ -18,8 +18,6 @@ class CacheSettings(BaseModel):
 
     database_path: Path = Path(".cache/event_search.sqlite")
 
-    temp_dir: Path = Path(".cache/tmp")
-
 
 class SearchSettings(BaseModel):
     default_limit: int = 100
