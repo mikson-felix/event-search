@@ -1,6 +1,17 @@
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+
 from rich.console import Console
 from rich.json import JSON
 from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    TextColumn,
+    TimeElapsedColumn,
+)
+from rich.status import Status
 from rich.table import Table
 from rich.text import Text
 
@@ -47,6 +58,31 @@ class ConsoleRenderer:
         )
 
         self._console.print()
+
+    @contextmanager
+    def track_partitions(
+        self,
+        total: int,
+    ) -> Iterator[Callable[[], None]]:
+        with Progress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            console=self._console,
+        ) as progress:
+            task_id = progress.add_task(
+                "Syncing partitions",
+                total=total,
+            )
+
+            yield lambda: progress.advance(task_id)
+
+    def status(
+        self,
+        message: str,
+    ) -> Status:
+        return self._console.status(message)
 
     def render_results(
         self,

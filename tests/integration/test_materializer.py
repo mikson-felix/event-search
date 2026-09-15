@@ -344,6 +344,50 @@ def test_invalid_timestamp_raises_materialization_error(
         )
 
 
+def test_failed_second_source_aborts_group_with_already_written_first_source(
+    tmp_path: Path,
+) -> None:
+    first_file = tmp_path / "first.ndjson"
+    second_file = tmp_path / "invalid.ndjson"
+
+    write_ndjson(
+        first_file,
+        [make_event(event_id="event-001")],
+    )
+
+    second_file.write_text(
+        "{invalid json}\n",
+        encoding="utf-8",
+    )
+
+    parquet_root = tmp_path / "parquet"
+
+    materializer = ParquetMaterializer(
+        parquet_root,
+        target_size_mb=128,
+    )
+
+    with pytest.raises(MaterializationError):
+        materializer.materialize(
+            partition=PARTITION,
+            sources=[
+                (
+                    first_file.read_bytes(),
+                    make_blob("first.ndjson"),
+                ),
+                (
+                    second_file.read_bytes(),
+                    make_blob("invalid.ndjson"),
+                ),
+            ],
+        )
+
+    output_dir = parquet_root / PARTITION
+
+    assert list(output_dir.glob("*.parquet")) == []
+    assert list(output_dir.glob("*.tmp")) == []
+
+
 def test_failed_materialization_does_not_create_final_parquet(
     tmp_path: Path,
 ) -> None:

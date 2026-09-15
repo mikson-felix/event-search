@@ -63,6 +63,10 @@ def sync_command(
 
     app.renderer.render_range(time_range)
 
-    result = app.sync_service.sync(partitions)
+    with app.renderer.track_partitions(len(partitions)) as on_partition_synced:
+        result = app.sync_service.sync(
+            partitions,
+            on_partition_synced=on_partition_synced,
+        )
 
     app.renderer.render_sync(result)

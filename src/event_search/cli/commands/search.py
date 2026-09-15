@@ -116,7 +116,11 @@ def search_command(
 
     app.renderer.render_range(time_range)
 
-    app.sync_service.sync(partitions)
+    with app.renderer.track_partitions(len(partitions)) as on_partition_synced:
+        app.sync_service.sync(
+            partitions,
+            on_partition_synced=on_partition_synced,
+        )
 
     filters = SearchFilters(
         event_id=event_id,
@@ -126,11 +130,12 @@ def search_command(
         category=category,
     )
 
-    results = app.search_service.search(
-        filters=filters,
-        time_range=time_range,
-        partitions=partitions,
-        limit=resolved_limit,
-    )
+    with app.renderer.status("Searching events…"):
+        results = app.search_service.search(
+            filters=filters,
+            time_range=time_range,
+            partitions=partitions,
+            limit=resolved_limit,
+        )
 
     app.renderer.render_results(results)
