@@ -1,6 +1,6 @@
 [project]
 name = "event-search"
-version = "0.2.2"
+version = "0.3.0"
 description = "Add your description here"
 readme = "README.md"
 authors = [
@@ -93,7 +93,7 @@ addopts = [
 ]   
 
 [tool.bumpversion]
-current_version = "0.2.2"
+current_version = "0.3.0"
 parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
 serialize = ["{major}.{minor}.{patch}"]
 search = "{current_version}"
