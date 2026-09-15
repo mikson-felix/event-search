@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 from click.testing import CliRunner
 
@@ -101,6 +101,7 @@ def test_sync_uses_default_time_range_when_arguments_are_omitted() -> None:
 
     app.sync_service.sync.assert_called_once_with(
         partitions,
+        on_partition_synced=ANY,
     )
 
     app.renderer.render_sync.assert_called_once_with(
@@ -232,7 +233,7 @@ def test_sync_renders_range_before_synchronization_result() -> None:
 
     app.renderer.render_range.side_effect = lambda value: calls.append("range")
 
-    app.sync_service.sync.side_effect = lambda value: (
+    app.sync_service.sync.side_effect = lambda value, on_partition_synced=None: (
         calls.append("sync"),
         sync_result,
     )[1]

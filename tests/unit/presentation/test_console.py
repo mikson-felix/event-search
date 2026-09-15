@@ -5,6 +5,7 @@ from io import StringIO
 from pathlib import Path
 
 from rich.console import Console
+from rich.status import Status
 
 from event_search.domain.models import (
     CacheStatus,
@@ -81,6 +82,45 @@ def test_render_range_outputs_local_and_utc_ranges() -> None:
     assert "UTC:" in output
     assert "2026-09-10 10:00:00 UTC" in output
     assert "2026-09-10 11:30:00 UTC" in output
+
+
+def test_track_partitions_renders_progress_bar_advanced_to_completion() -> None:
+    renderer, stream = make_renderer()
+
+    with renderer.track_partitions(2) as advance:
+        advance()
+        advance()
+
+    output = normalize_output(stream)
+
+    assert "Syncing partitions" in output
+    assert "2/2" in output
+
+
+def test_track_partitions_handles_zero_total() -> None:
+    renderer, stream = make_renderer()
+
+    with renderer.track_partitions(0):
+        pass
+
+    output = normalize_output(stream)
+
+    assert "Syncing partitions" in output
+
+
+def test_status_returns_usable_context_manager() -> None:
+    renderer, _ = make_renderer()
+
+    status = renderer.status("Searching events…")
+
+    assert isinstance(status, Status)
+
+    entered = False
+
+    with status:
+        entered = True
+
+    assert entered
 
 
 def test_render_results_outputs_table_with_event_data() -> None:

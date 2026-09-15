@@ -39,6 +39,7 @@ def fake_settings(
         ),
         sync=SimpleNamespace(
             concurrency=4,
+            download_concurrency=16,
             target_parquet_size_mb=128,
         ),
         logging=SimpleNamespace(
@@ -241,6 +242,7 @@ def test_build_application_wires_sync_service(
         manifest=(dependencies.manifest.return_value),
         materializer=(dependencies.materializer.return_value),
         concurrency=(fake_settings.sync.concurrency),
+        download_concurrency=(fake_settings.sync.download_concurrency),
     )
 
 

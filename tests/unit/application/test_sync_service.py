@@ -32,12 +32,14 @@ def make_service(
     manifest: MagicMock,
     materializer: MagicMock,
     concurrency: int = 2,
+    download_concurrency: int = 2,
 ) -> SyncService:
     return SyncService(
         source=source,
         manifest=manifest,
         materializer=materializer,
         concurrency=concurrency,
+        download_concurrency=download_concurrency,
     )
 
 
@@ -55,6 +57,25 @@ def test_rejects_invalid_concurrency() -> None:
             manifest=manifest,
             materializer=materializer,
             concurrency=0,
+            download_concurrency=2,
+        )
+
+
+def test_rejects_invalid_download_concurrency() -> None:
+    source = MagicMock()
+    manifest = MagicMock()
+    materializer = MagicMock()
+
+    with pytest.raises(
+        ValueError,
+        match="download_concurrency",
+    ):
+        SyncService(
+            source=source,
+            manifest=manifest,
+            materializer=materializer,
+            concurrency=2,
+            download_concurrency=0,
         )
 
 
@@ -126,7 +147,7 @@ def test_sync_materializes_only_missing_blobs(
 
     assert call.kwargs["partition"] == "2026/09/10/08"
 
-    sources = call.kwargs["sources"]
+    sources = list(call.kwargs["sources"])
 
     assert len(sources) == 1
     assert sources[0][1] == missing_blob
@@ -188,7 +209,7 @@ def test_downloaded_bytes_are_passed_to_materializer() -> None:
 
     service.sync(["2026/09/10/08"])
 
-    sources = materializer.materialize.call_args.kwargs["sources"]
+    sources = list(materializer.materialize.call_args.kwargs["sources"])
 
     assert sources == [(payload, blob)]
 
@@ -365,12 +386,113 @@ def test_downloads_missing_blobs_concurrently() -> None:
         source=source,
         manifest=manifest,
         materializer=materializer,
-        concurrency=len(blobs),
+        download_concurrency=len(blobs),
     )
 
     service.sync(["2026/09/10/08"])
 
     assert source.download.call_count == len(blobs)
+
+
+def test_sync_invokes_callback_once_per_partition() -> None:
+    source = MagicMock()
+    manifest = MagicMock()
+    materializer = MagicMock()
+
+    first_partition = "2026/09/10/08"
+    second_partition = "2026/09/10/09"
+
+    source.list_blobs.return_value = []
+    manifest.filter_missing.return_value = []
+
+    service = make_service(
+        source=source,
+        manifest=manifest,
+        materializer=materializer,
+    )
+
+    on_partition_synced = MagicMock()
+
+    service.sync(
+        [first_partition, second_partition],
+        on_partition_synced=on_partition_synced,
+    )
+
+    assert on_partition_synced.call_count == 2
+
+
+def test_sync_does_not_require_callback() -> None:
+    source = MagicMock()
+    manifest = MagicMock()
+    materializer = MagicMock()
+
+    source.list_blobs.return_value = []
+    manifest.filter_missing.return_value = []
+
+    service = make_service(
+        source=source,
+        manifest=manifest,
+        materializer=materializer,
+    )
+
+    result = service.sync(["2026/09/10/08"])
+
+    assert result.discovered == 0
+
+
+def test_materializer_can_start_before_all_downloads_finish() -> None:
+    source = MagicMock()
+    manifest = MagicMock()
+    materializer = MagicMock()
+
+    first_blob = make_blob(file_name="first.ndjson")
+    second_blob = make_blob(file_name="second.ndjson")
+
+    source.list_blobs.return_value = [first_blob, second_blob]
+    manifest.filter_missing.side_effect = lambda blobs: blobs
+
+    first_source_processed = threading.Event()
+    second_download_started = threading.Event()
+
+    def download(
+        blob: BlobObject,
+    ) -> bytes:
+        if blob is second_blob:
+            second_download_started.set()
+
+            # Only returns once the materializer has already consumed the
+            # first source, proving parsing overlapped with this still
+            # in-flight download rather than waiting for every download
+            # to finish first.
+            assert first_source_processed.wait(timeout=2)
+
+        return b"{}"
+
+    source.download.side_effect = download
+
+    def materialize(
+        *,
+        partition: str,
+        sources,
+    ) -> list:
+        for index, _ in enumerate(sources):
+            if index == 0:
+                assert second_download_started.wait(timeout=2)
+
+                first_source_processed.set()
+
+        return []
+
+    materializer.materialize.side_effect = materialize
+
+    service = make_service(
+        source=source,
+        manifest=manifest,
+        materializer=materializer,
+        download_concurrency=2,
+    )
+
+    service.sync(["2026/09/10/08"])
 
 
 def test_download_order_matches_missing_blobs_regardless_of_completion_order() -> None:
@@ -399,11 +521,11 @@ def test_download_order_matches_missing_blobs_regardless_of_completion_order() -
         source=source,
         manifest=manifest,
         materializer=materializer,
-        concurrency=len(blobs),
+        download_concurrency=len(blobs),
     )
 
     service.sync(["2026/09/10/08"])
 
-    sources = materializer.materialize.call_args.kwargs["sources"]
+    sources = list(materializer.materialize.call_args.kwargs["sources"])
 
     assert [blob for _, blob in sources] == blobs

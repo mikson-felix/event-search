@@ -641,6 +641,7 @@ EVENT_SEARCH_SEARCH__DEFAULT_LIMIT=100
 EVENT_SEARCH_SEARCH__MAX_LIMIT=10000
 
 EVENT_SEARCH_SYNC__CONCURRENCY=4
+EVENT_SEARCH_SYNC__DOWNLOAD_CONCURRENCY=16
 EVENT_SEARCH_SYNC__TARGET_PARQUET_SIZE_MB=128
 
 EVENT_SEARCH_LOGGING__LEVEL=INFO
@@ -722,10 +723,15 @@ These control the default and maximum number of returned search rows.
 
 ```dotenv
 EVENT_SEARCH_SYNC__CONCURRENCY=4
+EVENT_SEARCH_SYNC__DOWNLOAD_CONCURRENCY=16
 EVENT_SEARCH_SYNC__TARGET_PARQUET_SIZE_MB=128
 ```
 
 `CONCURRENCY` controls how many UTC-hour partitions can be synchronized simultaneously.
+
+`DOWNLOAD_CONCURRENCY` controls how many blobs are downloaded in parallel within a single partition. Downloads are
+I/O-bound, so this can be set well above `CONCURRENCY` without adding CPU load - it mainly trades off against how
+many concurrent connections your network/Azure account should handle.
 
 For example:
 
@@ -1870,26 +1876,43 @@ This allows Event Search to detect new immutable blobs while avoiding unnecessar
 
 # Concurrency Model
 
-Synchronization concurrency is partition-based.
+Synchronization concurrency has two independent levels: partitions and, within each partition, blob downloads.
 
 ```text
-ThreadPoolExecutor
+ThreadPoolExecutor (CONCURRENCY)
         │
-        ├── worker 1 → 2026/09/09/08
-        ├── worker 2 → 2026/09/09/09
-        ├── worker 3 → 2026/09/09/10
-        └── worker 4 → 2026/09/09/11
+        ├── worker 1 → 2026/09/09/08 ── ThreadPoolExecutor (DOWNLOAD_CONCURRENCY)
+        │                                       ├── download blob 1
+        │                                       ├── download blob 2
+        │                                       └── download blob N
+        ├── worker 2 → 2026/09/09/09 ── ...
+        ├── worker 3 → 2026/09/09/10 ── ...
+        └── worker 4 → 2026/09/09/11 ── ...
 ```
 
-A single worker processes one UTC-hour partition.
+A single partition-level worker processes one UTC-hour partition: it lists blobs, downloads the missing ones, and
+materializes them into Parquet.
 
-The concurrency level is configured using:
+The two levels are configured independently:
 
 ```dotenv
 EVENT_SEARCH_SYNC__CONCURRENCY=4
+EVENT_SEARCH_SYNC__DOWNLOAD_CONCURRENCY=16
 ```
 
+They are deliberately separate. `CONCURRENCY` bounds how much materialization (CPU-bound JSON parsing and Parquet
+writing) runs at once, while `DOWNLOAD_CONCURRENCY` bounds how many blob downloads (I/O-bound) run at once *within*
+a single partition. A partition with many blobs is not limited by the partition-level concurrency for its downloads -
+raising `DOWNLOAD_CONCURRENCY` speeds up exactly that case without spawning more CPU-bound materialization work in
+parallel.
+
 This improves Azure listing, download, and materialization throughput without introducing async infrastructure into the CLI application.
+
+Within a partition, downloading and materialization are pipelined rather than sequential phases: as soon as one blob
+finishes downloading, `ParquetMaterializer` starts parsing and writing it while the remaining blobs in that partition
+are still downloading in the background. This overlap is most effective when a partition has more blobs than
+`DOWNLOAD_CONCURRENCY` (multiple download "waves") - for partitions with few blobs it has little effect, since there
+is nothing left downloading to overlap with.
 
 ---
 

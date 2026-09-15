@@ -1,5 +1,8 @@
+from collections.abc import Callable, Iterator
 from concurrent.futures import (
+    Future,
     ThreadPoolExecutor,
+    as_completed,
 )
 from dataclasses import dataclass
 
@@ -31,18 +34,25 @@ class SyncService:
         manifest: ManifestRepository,
         materializer: Materializer,
         concurrency: int,
+        download_concurrency: int,
     ) -> None:
         if concurrency < 1:
             raise ValueError("concurrency must be greater than zero")
+
+        if download_concurrency < 1:
+            raise ValueError("download_concurrency must be greater than zero")
 
         self._source = source
         self._manifest = manifest
         self._materializer = materializer
         self._concurrency = concurrency
+        self._download_concurrency = download_concurrency
 
     def sync(
         self,
         partitions: list[str],
+        *,
+        on_partition_synced: Callable[[], None] | None = None,
     ) -> SyncResult:
         if not partitions:
             return SyncResult(
@@ -51,20 +61,29 @@ class SyncService:
                 skipped=0,
             )
 
+        discovered = 0
+        materialized = 0
+        skipped = 0
+
         with ThreadPoolExecutor(
             max_workers=self._concurrency,
         ) as executor:
-            results = list(
-                executor.map(
-                    self._sync_partition,
-                    partitions,
-                )
-            )
+            futures = [executor.submit(self._sync_partition, partition) for partition in partitions]
+
+            for future in as_completed(futures):
+                result = future.result()
+
+                discovered += result.discovered
+                materialized += result.materialized
+                skipped += result.skipped
+
+                if on_partition_synced is not None:
+                    on_partition_synced()
 
         return SyncResult(
-            discovered=sum(result.discovered for result in results),
-            materialized=sum(result.materialized for result in results),
-            skipped=sum(result.skipped for result in results),
+            discovered=discovered,
+            materialized=materialized,
+            skipped=skipped,
         )
 
     def _sync_partition(
@@ -98,15 +117,7 @@ class SyncService:
                 skipped=skipped,
             )
 
-        downloaded = self._download_all(missing_blobs)
-
-        sources = list(
-            zip(
-                downloaded,
-                missing_blobs,
-                strict=True,
-            )
-        )
+        sources = self._download_pipeline(missing_blobs)
 
         results = self._materializer.materialize(
             partition=partition,
@@ -129,16 +140,36 @@ class SyncService:
             skipped=skipped,
         )
 
-    def _download_all(
+    def _download_pipeline(
         self,
         blobs: list[BlobObject],
-    ) -> list[bytes]:
-        max_workers = min(len(blobs), self._concurrency)
+    ) -> Iterator[tuple[bytes, BlobObject]]:
+        # Downloads are submitted here, eagerly, so they start regardless of
+        # whether/how fast the returned iterator is consumed. Only the
+        # blocking wait for each result is deferred to iteration, which lets
+        # a materializer parse earlier blobs while later ones are still
+        # downloading in the background.
+        max_workers = min(len(blobs), self._download_concurrency)
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            return list(
-                executor.map(
-                    self._source.download,
-                    blobs,
-                )
-            )
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+
+        futures = [executor.submit(self._source.download, blob) for blob in blobs]
+
+        return self._iter_downloaded(
+            executor=executor,
+            futures=futures,
+            blobs=blobs,
+        )
+
+    @staticmethod
+    def _iter_downloaded(
+        *,
+        executor: ThreadPoolExecutor,
+        futures: list[Future[bytes]],
+        blobs: list[BlobObject],
+    ) -> Iterator[tuple[bytes, BlobObject]]:
+        try:
+            for future, blob in zip(futures, blobs, strict=True):
+                yield future.result(), blob
+        finally:
+            executor.shutdown(wait=True)

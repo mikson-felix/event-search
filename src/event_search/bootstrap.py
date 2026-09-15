@@ -69,6 +69,7 @@ def build_application() -> Application:
         manifest=manifest,
         materializer=materializer,
         concurrency=settings.sync.concurrency,
+        download_concurrency=settings.sync.download_concurrency,
     )
     search_service = SearchService(
         query_engine=query_engine,

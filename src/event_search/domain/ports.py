@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from typing import Protocol
 
 from .models import (
@@ -51,7 +52,7 @@ class Materializer(Protocol):
         self,
         *,
         partition: str,
-        sources: list[tuple[bytes, BlobObject]],
+        sources: Iterable[tuple[bytes, BlobObject]],
     ) -> list[MaterializationResult]: ...
 
 
