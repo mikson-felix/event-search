@@ -1,4 +1,4 @@
-.PHONY: install install-completion fmt lint test test-cov check
+.PHONY: install install-completion fmt lint test test-cov check bump-major bump-minor bump-patch
 
 install:
 	uv sync
@@ -45,3 +45,12 @@ test-cov:
 		--cov-report=html
 
 check: lint test
+
+bump-major:
+	uv run bump-my-version bump major
+
+bump-minor:
+	uv run bump-my-version bump minor
+
+bump-patch:
+	uv run bump-my-version bump patch
