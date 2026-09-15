@@ -32,7 +32,6 @@ def fake_settings(
         cache=SimpleNamespace(
             parquet_dir=Path(".cache/parquet"),
             database_path=Path(".cache/event_search.sqlite"),
-            temp_dir=Path(".cache/tmp"),
         ),
         search=SimpleNamespace(
             default_limit=100,
@@ -241,7 +240,6 @@ def test_build_application_wires_sync_service(
         source=(dependencies.azure_blob_source.return_value),
         manifest=(dependencies.manifest.return_value),
         materializer=(dependencies.materializer.return_value),
-        temp_dir=(fake_settings.cache.temp_dir),
         concurrency=(fake_settings.sync.concurrency),
     )
 

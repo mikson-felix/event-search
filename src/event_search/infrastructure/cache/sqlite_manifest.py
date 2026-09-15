@@ -12,6 +12,10 @@ from event_search.domain.models import (
 
 from .sqlite import SQLiteConnectionFactory
 
+# SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 999 on older builds; stay
+# comfortably under that when batching an IN (...) clause.
+_MAX_BATCH_SIZE = 500
+
 
 class SQLiteManifestRepository:
     def __init__(
@@ -91,33 +95,75 @@ class SQLiteManifestRepository:
             materialized_at=(datetime.fromisoformat(row[2])),
         )
 
-    def is_materialized(
+    def filter_missing(
         self,
-        blob: BlobObject,
-    ) -> bool:
-        entry = self.get(blob.name)
+        blobs: list[BlobObject],
+    ) -> list[BlobObject]:
+        if not blobs:
+            return []
 
-        if entry is None:
-            logger.debug(
-                "Cache miss: blob={} reason=manifest_entry_missing",
-                blob.name,
-            )
-            return False
-
-        if not entry.parquet_path.exists():
-            logger.debug(
-                "Cache miss: blob={} reason=parquet_missing path={}",
-                blob.name,
-                entry.parquet_path,
-            )
-            return False
-
-        logger.debug(
-            "Cache hit: blob={} parquet={}",
-            blob.name,
-            entry.parquet_path,
+        parquet_path_by_blob_name = self._fetch_parquet_paths(
+            blob_names=[blob.name for blob in blobs],
         )
-        return True
+
+        missing: list[BlobObject] = []
+
+        for blob in blobs:
+            parquet_path = parquet_path_by_blob_name.get(blob.name)
+
+            if parquet_path is None:
+                logger.debug(
+                    "Cache miss: blob={} reason=manifest_entry_missing",
+                    blob.name,
+                )
+                missing.append(blob)
+                continue
+
+            if not parquet_path.exists():
+                logger.debug(
+                    "Cache miss: blob={} reason=parquet_missing path={}",
+                    blob.name,
+                    parquet_path,
+                )
+                missing.append(blob)
+                continue
+
+            logger.debug(
+                "Cache hit: blob={} parquet={}",
+                blob.name,
+                parquet_path,
+            )
+
+        return missing
+
+    def _fetch_parquet_paths(
+        self,
+        *,
+        blob_names: list[str],
+    ) -> dict[str, Path]:
+        result: dict[str, Path] = {}
+
+        with self._connection_factory.connect() as connection:
+            for start in range(0, len(blob_names), _MAX_BATCH_SIZE):
+                batch = blob_names[start : start + _MAX_BATCH_SIZE]
+
+                placeholders = ",".join("?" for _ in batch)
+
+                rows = connection.execute(
+                    f"""
+                    SELECT
+                        blob_name,
+                        parquet_path
+                    FROM processed_blobs
+                    WHERE blob_name IN ({placeholders})
+                    """,
+                    batch,
+                ).fetchall()
+
+                for blob_name, parquet_path in rows:
+                    result[blob_name] = Path(parquet_path)
+
+        return result
 
     def save(
         self,

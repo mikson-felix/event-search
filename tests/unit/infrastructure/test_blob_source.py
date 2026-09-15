@@ -1,4 +1,3 @@
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -177,8 +176,7 @@ def test_list_blobs_without_folder_name(
     )
 
 
-def test_download_writes_blob_to_target(
-    tmp_path: Path,
+def test_download_returns_blob_content(
     container_client: MagicMock,
 ) -> None:
     source = AzureBlobSource(
@@ -199,25 +197,15 @@ def test_download_writes_blob_to_target(
     container_client.get_blob_client.return_value = blob_client
     blob_client.download_blob.return_value = downloader
 
-    def write_content(stream) -> None:
-        stream.write(b'{"event_id":"event-001"}\n')
+    downloader.readall.return_value = b'{"event_id":"event-001"}\n'
 
-    downloader.readinto.side_effect = write_content
-
-    target = tmp_path / "nested" / "directory" / "events.ndjson"
-
-    source.download(
-        blob,
-        target,
-    )
+    content = source.download(blob)
 
     container_client.get_blob_client.assert_called_once_with(
         blob.name,
     )
 
     blob_client.download_blob.assert_called_once_with()
-    downloader.readinto.assert_called_once()
+    downloader.readall.assert_called_once_with()
 
-    assert target.exists()
-
-    assert target.read_bytes() == (b'{"event_id":"event-001"}\n')
+    assert content == (b'{"event_id":"event-001"}\n')

@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from azure.storage.blob import ContainerClient
 from loguru import logger
 
@@ -58,30 +56,23 @@ class AzureBlobSource:
     def download(
         self,
         blob: BlobObject,
-        target: Path,
-    ) -> None:
+    ) -> bytes:
         logger.debug(
-            "Downloading Azure blob: blob={}, target={}",
+            "Downloading Azure blob: blob={}",
             blob.name,
-            target,
-        )
-        target.parent.mkdir(
-            parents=True,
-            exist_ok=True,
         )
 
         blob_client = self._client.get_blob_client(blob.name)
 
-        downloader = blob_client.download_blob()
-
-        with target.open("wb") as stream:
-            downloader.readinto(stream)
+        content = blob_client.download_blob().readall()
 
         logger.debug(
             "Azure blob downloaded: blob={}, size_bytes={}",
             blob.name,
-            target.stat().st_size,
+            len(content),
         )
+
+        return content
 
     def _build_prefix(self, partition: str) -> str:
         year, month, day, hour = partition.strip("/").split("/")

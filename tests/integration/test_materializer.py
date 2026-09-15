@@ -87,7 +87,7 @@ def materialize_one(
         partition=blob.partition,
         sources=[
             (
-                source_file,
+                source_file.read_bytes(),
                 blob,
             ),
         ],
@@ -313,7 +313,7 @@ def test_invalid_ndjson_raises_materialization_error(
             partition=PARTITION,
             sources=[
                 (
-                    source_file,
+                    source_file.read_bytes(),
                     make_blob(),
                 )
             ],
@@ -337,7 +337,7 @@ def test_invalid_timestamp_raises_materialization_error(
             partition=PARTITION,
             sources=[
                 (
-                    source_file,
+                    source_file.read_bytes(),
                     make_blob(),
                 )
             ],
@@ -366,7 +366,7 @@ def test_failed_materialization_does_not_create_final_parquet(
             partition=PARTITION,
             sources=[
                 (
-                    source_file,
+                    source_file.read_bytes(),
                     make_blob(),
                 )
             ],
@@ -468,11 +468,11 @@ def test_materializes_multiple_sources_into_one_parquet(
         partition=PARTITION,
         sources=[
             (
-                first_file,
+                first_file.read_bytes(),
                 first_blob,
             ),
             (
-                second_file,
+                second_file.read_bytes(),
                 second_blob,
             ),
         ],
@@ -532,11 +532,11 @@ def test_splits_sources_by_target_size(
         partition=PARTITION,
         sources=[
             (
-                first_file,
+                first_file.read_bytes(),
                 first_blob,
             ),
             (
-                second_file,
+                second_file.read_bytes(),
                 second_blob,
             ),
         ],
@@ -588,7 +588,7 @@ def test_rejects_sources_from_other_partition(
             partition=PARTITION,
             sources=[
                 (
-                    source_file,
+                    source_file.read_bytes(),
                     blob,
                 )
             ],

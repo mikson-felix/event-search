@@ -68,7 +68,6 @@ def build_application() -> Application:
         source=blob_source,
         manifest=manifest,
         materializer=materializer,
-        temp_dir=settings.cache.temp_dir,
         concurrency=settings.sync.concurrency,
     )
     search_service = SearchService(

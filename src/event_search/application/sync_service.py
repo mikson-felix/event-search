@@ -2,7 +2,6 @@ from concurrent.futures import (
     ThreadPoolExecutor,
 )
 from dataclasses import dataclass
-from pathlib import Path
 
 from loguru import logger
 
@@ -31,7 +30,6 @@ class SyncService:
         source: BlobSource,
         manifest: ManifestRepository,
         materializer: Materializer,
-        temp_dir: Path,
         concurrency: int,
     ) -> None:
         if concurrency < 1:
@@ -40,7 +38,6 @@ class SyncService:
         self._source = source
         self._manifest = manifest
         self._materializer = materializer
-        self._temp_dir = temp_dir.resolve()
         self._concurrency = concurrency
 
     def sync(
@@ -79,7 +76,7 @@ class SyncService:
             partition,
         )
         blobs = self._source.list_blobs(partition)
-        missing_blobs = [blob for blob in blobs if not self._manifest.is_materialized(blob)]
+        missing_blobs = self._manifest.filter_missing(blobs)
         skipped = len(blobs) - len(missing_blobs)
         logger.debug(
             ("Sync partition state: partition={}, discovered={}, cached={}, missing={}"),
@@ -101,40 +98,30 @@ class SyncService:
                 skipped=skipped,
             )
 
-        temp_files = [self._temp_dir / blob.partition / blob.file_name for blob in missing_blobs]
+        downloaded = self._download_all(missing_blobs)
 
-        try:
-            self._download_all(
-                blobs=missing_blobs,
-                temp_files=temp_files,
+        sources = list(
+            zip(
+                downloaded,
+                missing_blobs,
+                strict=True,
             )
+        )
 
-            sources = list(
-                zip(
-                    temp_files,
-                    missing_blobs,
-                    strict=True,
-                )
-            )
+        results = self._materializer.materialize(
+            partition=partition,
+            sources=sources,
+        )
 
-            results = self._materializer.materialize(
-                partition=partition,
-                sources=sources,
-            )
+        for result in results:
+            self._manifest.save(result)
 
-            for result in results:
-                self._manifest.save(result)
-
-            logger.debug(
-                ("Partition materialized: partition={}, source_blobs={}, parquet_files={}"),
-                partition,
-                len(missing_blobs),
-                len(results),
-            )
-
-        finally:
-            for temp_file in temp_files:
-                temp_file.unlink(missing_ok=True)
+        logger.debug(
+            ("Partition materialized: partition={}, source_blobs={}, parquet_files={}"),
+            partition,
+            len(missing_blobs),
+            len(results),
+        )
 
         return _PartitionSyncResult(
             discovered=len(blobs),
@@ -144,17 +131,14 @@ class SyncService:
 
     def _download_all(
         self,
-        *,
         blobs: list[BlobObject],
-        temp_files: list[Path],
-    ) -> None:
+    ) -> list[bytes]:
         max_workers = min(len(blobs), self._concurrency)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            list(
+            return list(
                 executor.map(
                     self._source.download,
                     blobs,
-                    temp_files,
                 )
             )
