@@ -1,5 +1,8 @@
 from dataclasses import dataclass
 
+from event_search.application.cache_service import (
+    CacheService,
+)
 from event_search.application.search_service import (
     SearchService,
 )
@@ -46,6 +49,7 @@ class Application:
 
     sync_service: SyncService
     search_service: SearchService
+    cache_service: CacheService
 
     manifest: ManifestRepository
 
@@ -76,6 +80,10 @@ def build_application() -> Application:
         result_store=search_result_store,
         details_reader=details_reader,
     )
+    cache_service = CacheService(
+        parquet_dir=settings.cache.parquet_dir,
+        database_path=settings.cache.database_path,
+    )
     timezone_provider = TimezoneProvider()
     time_range_resolver = TimeRangeResolver(timezone_provider)
     partition_resolver = BlobPartitionResolver()
@@ -90,6 +98,7 @@ def build_application() -> Application:
         partition_resolver=partition_resolver,
         sync_service=sync_service,
         search_service=search_service,
+        cache_service=cache_service,
         manifest=manifest,
         renderer=renderer,
     )

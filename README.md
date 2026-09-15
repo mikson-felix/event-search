@@ -706,6 +706,9 @@ Parquet contains event data.
 
 Downloaded NDJSON blobs are kept in memory and parsed directly; nothing is staged to disk before materialization.
 
+Both paths can be wiped with `event-search clean` (see [`clean`](#clean)) to force a full rebuild from Azure Blob
+Storage.
+
 ---
 
 ## Search Settings
@@ -804,7 +807,7 @@ Credentials such as SAS tokens should never be logged.
 
 # CLI
 
-The application exposes four commands:
+The application exposes five commands:
 
 ```text
 event-search
@@ -812,7 +815,8 @@ event-search
 ├── search    Search events
 ├── show      Show raw event JSON
 ├── sync      Synchronize the local cache
-└── status    Show local cache statistics
+├── status    Show local cache statistics
+└── clean     Remove the local Parquet cache and SQLite database
 ```
 
 Global options:
@@ -1372,6 +1376,43 @@ event-search status
 ```
 
 Azure Blob Storage is not accessed.
+
+---
+
+# `clean`
+
+Remove the local Parquet cache and the local SQLite database.
+
+```bash
+event-search clean
+```
+
+```text
+This will delete the local Parquet cache and SQLite database. Continue? [y/N]:
+```
+
+Skip the confirmation prompt for scripted/non-interactive use:
+
+```bash
+event-search clean --yes
+```
+
+`clean` deletes:
+
+- The entire Parquet cache directory (`EVENT_SEARCH_CACHE__PARQUET_DIR`).
+- The SQLite database file (`EVENT_SEARCH_CACHE__DATABASE_PATH`), including its `-wal`/`-shm` sidecar files.
+
+```text
+event-search clean
+        │
+        ▼
+      SQLite
+        +
+ local filesystem
+```
+
+Azure Blob Storage is not accessed and nothing is deleted there - this only removes the local cache. The next
+`sync` or `search` rebuilds it from scratch.
 
 ---
 
