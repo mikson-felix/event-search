@@ -312,6 +312,18 @@ def test_render_status_outputs_dash_without_materialization_time() -> None:
     assert "-" in output
 
 
+def test_render_clean_outputs_confirmation() -> None:
+    renderer, stream = make_renderer()
+
+    renderer.render_clean()
+
+    output = normalize_output(stream)
+
+    assert "Local cache cleared" in output
+    assert "Parquet" in output
+    assert "SQLite" in output
+
+
 def test_render_sync_outputs_sync_statistics() -> None:
     renderer, stream = make_renderer()
 

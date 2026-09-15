@@ -3,6 +3,7 @@ import click
 from event_search import __version__
 from event_search.bootstrap import build_application
 from event_search.cli.commands import (
+    clean_command,
     search_command,
     show_command,
     status_command,
@@ -34,3 +35,4 @@ cli.add_command(search_command)
 cli.add_command(show_command)
 cli.add_command(sync_command)
 cli.add_command(status_command)
+cli.add_command(clean_command)

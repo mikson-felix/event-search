@@ -219,6 +219,11 @@ class ConsoleRenderer:
             f"[cyan]{result.skipped}[/]"
         )
 
+    def render_clean(
+        self,
+    ) -> None:
+        self._console.print("[green]Local cache cleared.[/] Parquet files and the SQLite database were removed.")
+
     @staticmethod
     def _format_size(
         value: int,

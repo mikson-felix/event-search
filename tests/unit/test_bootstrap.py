@@ -66,6 +66,7 @@ def dependencies(
 
     sync_service = MagicMock()
     search_service = MagicMock()
+    cache_service = MagicMock()
 
     timezone_provider = MagicMock()
     time_range_resolver = MagicMock()
@@ -129,6 +130,12 @@ def dependencies(
 
     monkeypatch.setattr(
         bootstrap_module,
+        "CacheService",
+        cache_service,
+    )
+
+    monkeypatch.setattr(
+        bootstrap_module,
         "TimezoneProvider",
         timezone_provider,
     )
@@ -161,6 +168,7 @@ def dependencies(
         details_reader=details_reader,
         sync_service=sync_service,
         search_service=search_service,
+        cache_service=cache_service,
         timezone_provider=timezone_provider,
         time_range_resolver=time_range_resolver,
         partition_resolver=partition_resolver,
@@ -184,6 +192,8 @@ def test_build_application_creates_application(
     assert app.sync_service is (dependencies.sync_service.return_value)
 
     assert app.search_service is (dependencies.search_service.return_value)
+
+    assert app.cache_service is (dependencies.cache_service.return_value)
 
     assert app.manifest is (dependencies.manifest.return_value)
 
@@ -255,6 +265,18 @@ def test_build_application_wires_search_service(
         query_engine=(dependencies.query_engine.return_value),
         result_store=(dependencies.search_result_store.return_value),
         details_reader=(dependencies.details_reader.return_value),
+    )
+
+
+def test_build_application_wires_cache_service(
+    dependencies: SimpleNamespace,
+    fake_settings: SimpleNamespace,
+) -> None:
+    build_application()
+
+    dependencies.cache_service.assert_called_once_with(
+        parquet_dir=(fake_settings.cache.parquet_dir),
+        database_path=(fake_settings.cache.database_path),
     )
 
 
