@@ -41,6 +41,8 @@ def fake_settings(
             concurrency=4,
             download_concurrency=16,
             target_parquet_size_mb=128,
+            parse_batch_size_mb=4,
+            write_batch_size_mb=4,
         ),
         logging=SimpleNamespace(
             level="DEBUG",
@@ -232,6 +234,8 @@ def test_build_application_uses_cache_paths_from_settings(
     dependencies.materializer.assert_called_once_with(
         fake_settings.cache.parquet_dir,
         target_size_mb=(fake_settings.sync.target_parquet_size_mb),
+        parse_batch_size_mb=(fake_settings.sync.parse_batch_size_mb),
+        write_batch_size_mb=(fake_settings.sync.write_batch_size_mb),
     )
 
     dependencies.query_engine.assert_called_once_with(

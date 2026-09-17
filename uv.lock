@@ -522,7 +522,7 @@ wheels = [
 
 [[package]]
 name = "event-search"
-version = "0.3.1"
+version = "0.3.2"
 source = { editable = "." }
 dependencies = [
     { name = "azure-storage-blob" },

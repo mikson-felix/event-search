@@ -28,6 +28,8 @@ class SyncSettings(BaseModel):
     concurrency: int = 4
     download_concurrency: int = 16
     target_parquet_size_mb: int = 128
+    parse_batch_size_mb: int = 4
+    write_batch_size_mb: int = 4
 
 
 class LoggingSettings(BaseModel):
