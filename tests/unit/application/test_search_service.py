@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+
+import pytest
+from faker import Faker
 
 from event_search.application.search_service import SearchService
 from event_search.domain.models import (
@@ -13,30 +17,39 @@ from event_search.domain.models import (
 )
 
 
-def make_summary(
-    event_id: str = "event-001",
-) -> SearchSummary:
-    return SearchSummary(
-        event_id=event_id,
-        user_id="user-001",
-        organization_id="org-001",
-        event_name="LOGIN",
-        category="AUTH",
-        timestamp=datetime(
-            2026,
-            9,
-            9,
-            8,
-            30,
-            tzinfo=UTC,
-        ),
-        locator=EventLocator(
-            parquet_path=Path("/tmp/events.parquet"),
-            source_line=1,
-            blob_partition="2026/09/09/08",
-            blob_name="events.ndjson",
-        ),
-    )
+@pytest.fixture
+def make_summary(faker: Faker) -> Callable[..., SearchSummary]:
+    def factory(
+        *,
+        event_id: str | None = None,
+        user_id: str | None = None,
+        organization_id: str | None = None,
+        event_name: str | None = None,
+        category: str | None = None,
+    ) -> SearchSummary:
+        return SearchSummary(
+            event_id=event_id if event_id is not None else faker.uuid4(),
+            user_id=user_id if user_id is not None else faker.uuid4(),
+            organization_id=(organization_id if organization_id is not None else faker.uuid4()),
+            event_name=event_name if event_name is not None else faker.word(),
+            category=category if category is not None else faker.word(),
+            timestamp=datetime(
+                2026,
+                9,
+                9,
+                8,
+                30,
+                tzinfo=UTC,
+            ),
+            locator=EventLocator(
+                parquet_path=Path("/tmp/events.parquet"),
+                source_line=1,
+                blob_partition="2026/09/09/08",
+                blob_name="events.ndjson",
+            ),
+        )
+
+    return factory
 
 
 class FakeQueryEngine:
@@ -143,7 +156,10 @@ def make_time_range() -> TimeRange:
     )
 
 
-def test_search_queries_engine_and_replaces_latest_results() -> None:
+def test_search_queries_engine_and_replaces_latest_results(
+    faker: Faker,
+    make_summary: Callable[..., SearchSummary],
+) -> None:
     summary = make_summary()
 
     engine = FakeQueryEngine([summary])
@@ -161,7 +177,7 @@ def test_search_queries_engine_and_replaces_latest_results() -> None:
     )
 
     filters = SearchFilters(
-        event_name="LOGIN",
+        event_name=faker.word(),
     )
 
     time_range = make_time_range()
@@ -175,15 +191,19 @@ def test_search_queries_engine_and_replaces_latest_results() -> None:
 
     assert result == [summary]
 
-    assert store.get("event-001") == summary
+    assert store.get(summary.event_id) == summary
 
     assert len(engine.calls) == 1
     assert engine.calls[0]["limit"] == 100
 
 
-def test_empty_search_clears_previous_results() -> None:
+def test_empty_search_clears_previous_results(
+    make_summary: Callable[..., SearchSummary],
+) -> None:
+    summary = make_summary()
+
     store = FakeResultStore()
-    store.replace([make_summary()])
+    store.replace([summary])
 
     service = SearchService(
         query_engine=FakeQueryEngine([]),
@@ -198,18 +218,20 @@ def test_empty_search_clears_previous_results() -> None:
         limit=100,
     )
 
-    assert store.get("event-001") is None
+    assert store.get(summary.event_id) is None
 
 
-def test_get_from_last_search_reads_exact_locator() -> None:
+def test_get_from_last_search_reads_exact_locator(
+    make_summary: Callable[..., SearchSummary],
+) -> None:
     summary = make_summary()
 
     details = EventDetails(
-        event_id="event-001",
+        event_id=summary.event_id,
         blob_partition="2026/09/09/08",
         blob_name="events.ndjson",
         source_line=1,
-        raw_json='{"event_id":"event-001"}',
+        raw_json=f'{{"event_id":"{summary.event_id}"}}',
     )
 
     store = FakeResultStore()
@@ -225,19 +247,21 @@ def test_get_from_last_search_reads_exact_locator() -> None:
         details_reader=reader,
     )
 
-    result = service.get_from_last_search("event-001")
+    result = service.get_from_last_search(summary.event_id)
 
     assert result == details
 
     assert reader.calls == [
         (
-            "event-001",
+            summary.event_id,
             summary.locator,
         )
     ]
 
 
-def test_get_from_last_search_does_not_scan_if_event_is_unknown() -> None:
+def test_get_from_last_search_does_not_scan_if_event_is_unknown(
+    faker: Faker,
+) -> None:
     reader = FakeDetailsReader(
         details=None,
     )
@@ -248,19 +272,23 @@ def test_get_from_last_search_does_not_scan_if_event_is_unknown() -> None:
         details_reader=reader,
     )
 
-    result = service.get_from_last_search("unknown")
+    result = service.get_from_last_search(faker.uuid4())
 
     assert result is None
     assert reader.calls == []
 
 
-def test_complete_event_ids_delegates_to_store() -> None:
+def test_complete_event_ids_delegates_to_store(
+    faker: Faker,
+) -> None:
     store = FakeResultStore()
 
-    store.find_ids_result = [
-        "abc-001",
-        "abc-002",
+    matching_ids = [
+        faker.uuid4(),
+        faker.uuid4(),
     ]
+
+    store.find_ids_result = matching_ids
 
     service = SearchService(
         query_engine=FakeQueryEngine([]),
@@ -269,11 +297,8 @@ def test_complete_event_ids_delegates_to_store() -> None:
     )
 
     result = service.complete_event_ids(
-        prefix="abc",
+        prefix=faker.word(),
         limit=20,
     )
 
-    assert result == [
-        "abc-001",
-        "abc-002",
-    ]
+    assert result == matching_ids
