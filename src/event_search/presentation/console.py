@@ -91,7 +91,7 @@ class ConsoleRenderer:
         table = Table(
             title=f"Events ({len(results)})",
             show_lines=False,
-            expand=True,
+            expand=False,
         )
 
         table.add_column(

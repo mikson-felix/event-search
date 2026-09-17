@@ -1311,6 +1311,12 @@ Synchronization is performed per UTC-hour partition.
 
 There is no ETag comparison because blobs are immutable by contract.
 
+While partitions are synchronizing, a progress bar reports how many of the requested partitions have completed:
+
+```text
+Syncing partitions ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5/12 0:00:03
+```
+
 ---
 
 ## Cache Hit Semantics
@@ -1429,7 +1435,7 @@ event-search --version
 Example:
 
 ```text
-event-search, version 0.1.0
+event-search, version 0.3.2
 ```
 
 The version has a single source of truth:
