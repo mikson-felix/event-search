@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import ANY, MagicMock
 
 from click.testing import CliRunner
+from faker import Faker
 
 from event_search.cli.commands.search import search_command
 from event_search.domain.errors import InvalidTimeRangeError
@@ -313,7 +314,7 @@ def test_search_passes_explicit_time_range() -> None:
     )
 
 
-def test_search_passes_all_filters() -> None:
+def test_search_passes_all_filters(faker: Faker) -> None:
     runner = CliRunner()
 
     app = make_application()
@@ -333,19 +334,28 @@ def test_search_passes_all_filters() -> None:
 
     app.search_service.search.return_value = search_results
 
+    event_id = faker.uuid4()
+    application = faker.word()
+    user_id = faker.uuid4()
+    organization_id = faker.uuid4()
+    event_name = faker.word()
+    category = faker.word()
+
     result = runner.invoke(
         search_command,
         [
             "--event-id",
-            "event-001",
+            event_id,
+            "--application",
+            application,
             "--user-id",
-            "user-001",
+            user_id,
             "--organization-id",
-            "org-001",
+            organization_id,
             "--event-name",
-            "LOGIN",
+            event_name,
             "--category",
-            "AUTH",
+            category,
             "--limit",
             "50",
         ],
@@ -356,11 +366,12 @@ def test_search_passes_all_filters() -> None:
 
     app.search_service.search.assert_called_once_with(
         filters=SearchFilters(
-            event_id="event-001",
-            user_id="user-001",
-            organization_id="org-001",
-            event_name="LOGIN",
-            category="AUTH",
+            event_id=event_id,
+            application=application,
+            user_id=user_id,
+            organization_id=organization_id,
+            event_name=event_name,
+            category=category,
         ),
         time_range=time_range,
         partitions=[
@@ -462,6 +473,7 @@ def test_search_help() -> None:
     assert "--from DATETIME" in result.output
     assert "--to DATETIME" in result.output
     assert "--event-id TEXT" in result.output
+    assert "--application TEXT" in result.output
     assert "--user-id TEXT" in result.output
     assert "--organization-id TEXT" in result.output
     assert "--event-name TEXT" in result.output

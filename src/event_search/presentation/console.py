@@ -98,6 +98,7 @@ class ConsoleRenderer:
             "ID",
             style="bold cyan",
             no_wrap=True,
+            width=36,
         )
 
         table.add_column(

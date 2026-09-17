@@ -1,10 +1,12 @@
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
 import duckdb
 import pyarrow.parquet as pq
 import pytest
+from faker import Faker
 
 from event_search.domain.errors import MaterializationError
 from event_search.domain.models import BlobObject
@@ -25,27 +27,33 @@ def make_blob(
     )
 
 
-def make_event(
-    *,
-    event_id: str = "event-001",
-    user_id: str = "user-001",
-    organization_id: str = "org-001",
-    event_name: str = "document.opened",
-    category: str = "document",
-    timestamp: str = "2026-09-10T08:30:00Z",
-) -> dict:
-    return {
-        "event_id": event_id,
-        "timestamp": timestamp,
-        "event": {
-            "name": event_name,
-            "category": category,
-        },
-        "actor": {
-            "user_id": user_id,
-            "organization_id": organization_id,
-        },
-    }
+@pytest.fixture
+def make_event(faker: Faker) -> Callable[..., dict]:
+    def factory(
+        *,
+        event_id: str | None = None,
+        application: str | None = None,
+        user_id: str | None = None,
+        organization_id: str | None = None,
+        event_name: str | None = None,
+        category: str | None = None,
+        timestamp: str = "2026-09-10T08:30:00Z",
+    ) -> dict:
+        return {
+            "event_id": event_id if event_id is not None else faker.uuid4(),
+            "application": application if application is not None else faker.word(),
+            "timestamp": timestamp,
+            "event": {
+                "name": event_name if event_name is not None else faker.word(),
+                "category": category if category is not None else faker.word(),
+            },
+            "actor": {
+                "user_id": user_id if user_id is not None else faker.uuid4(),
+                "organization_id": (organization_id if organization_id is not None else faker.uuid4()),
+            },
+        }
+
+    return factory
 
 
 def write_ndjson(
@@ -100,15 +108,16 @@ def materialize_one(
 
 def test_materializes_entire_ndjson_file(
     tmp_path: Path,
+    make_event: Callable[..., dict],
 ) -> None:
     source_file = tmp_path / "events.ndjson"
 
     write_ndjson(
         source_file,
         [
-            make_event(event_id="event-001"),
-            make_event(event_id="event-002"),
-            make_event(event_id="event-003"),
+            make_event(),
+            make_event(),
+            make_event(),
         ],
     )
 
@@ -131,18 +140,28 @@ def test_materializes_entire_ndjson_file(
 
 def test_materializes_indexed_fields(
     tmp_path: Path,
+    faker: Faker,
+    make_event: Callable[..., dict],
 ) -> None:
     source_file = tmp_path / "events.ndjson"
+
+    event_id = faker.uuid4()
+    application = faker.word()
+    user_id = faker.uuid4()
+    organization_id = faker.uuid4()
+    event_name = faker.word()
+    category = faker.word()
 
     write_ndjson(
         source_file,
         [
             make_event(
-                event_id="event-001",
-                user_id="user-123",
-                organization_id="org-456",
-                event_name="file.downloaded",
-                category="files",
+                event_id=event_id,
+                application=application,
+                user_id=user_id,
+                organization_id=organization_id,
+                event_name=event_name,
+                category=category,
             )
         ],
     )
@@ -157,11 +176,12 @@ def test_materializes_indexed_fields(
 
     row = table.to_pylist()[0]
 
-    assert row["event_id"] == "event-001"
-    assert row["user_id"] == "user-123"
-    assert row["organization_id"] == "org-456"
-    assert row["event_name"] == "file.downloaded"
-    assert row["category"] == "files"
+    assert row["event_id"] == event_id
+    assert row["application"] == application
+    assert row["user_id"] == user_id
+    assert row["organization_id"] == organization_id
+    assert row["event_name"] == event_name
+    assert row["category"] == category
     assert row["timestamp"] == datetime(
         2026,
         9,
@@ -174,14 +194,15 @@ def test_materializes_indexed_fields(
 
 def test_materializes_provenance_fields(
     tmp_path: Path,
+    make_event: Callable[..., dict],
 ) -> None:
     source_file = tmp_path / "events.ndjson"
 
     write_ndjson(
         source_file,
         [
-            make_event(event_id="event-001"),
-            make_event(event_id="event-002"),
+            make_event(),
+            make_event(),
         ],
     )
 
@@ -206,10 +227,11 @@ def test_materializes_provenance_fields(
 
 def test_raw_json_is_preserved(
     tmp_path: Path,
+    make_event: Callable[..., dict],
 ) -> None:
     source_file = tmp_path / "events.ndjson"
 
-    event = make_event(event_id="event-001")
+    event = make_event()
 
     write_ndjson(
         source_file,
@@ -229,17 +251,12 @@ def test_raw_json_is_preserved(
 
 def test_blank_lines_are_ignored(
     tmp_path: Path,
+    make_event: Callable[..., dict],
 ) -> None:
     source_file = tmp_path / "events.ndjson"
 
     source_file.write_text(
-        (
-            "\n"
-            + json.dumps(make_event(event_id="event-001"))
-            + "\n\n"
-            + json.dumps(make_event(event_id="event-002"))
-            + "\n"
-        ),
+        ("\n" + json.dumps(make_event()) + "\n\n" + json.dumps(make_event()) + "\n"),
         encoding="utf-8",
     )
 
@@ -275,6 +292,7 @@ def test_empty_file_creates_empty_parquet(
 
 def test_output_file_uses_generated_part_name(
     tmp_path: Path,
+    make_event: Callable[..., dict],
 ) -> None:
     source_file = tmp_path / "source.ndjson"
 
@@ -308,20 +326,23 @@ def test_invalid_ndjson_raises_materialization_error(
 
     materializer = make_materializer(tmp_path)
 
+    sources = [
+        (
+            source_file.read_bytes(),
+            make_blob(),
+        )
+    ]
+
     with pytest.raises(MaterializationError):
         materializer.materialize(
             partition=PARTITION,
-            sources=[
-                (
-                    source_file.read_bytes(),
-                    make_blob(),
-                )
-            ],
+            sources=sources,
         )
 
 
 def test_invalid_timestamp_raises_materialization_error(
     tmp_path: Path,
+    make_event: Callable[..., dict],
 ) -> None:
     source_file = tmp_path / "invalid.ndjson"
 
@@ -332,27 +353,30 @@ def test_invalid_timestamp_raises_materialization_error(
 
     materializer = make_materializer(tmp_path)
 
+    sources = [
+        (
+            source_file.read_bytes(),
+            make_blob(),
+        )
+    ]
+
     with pytest.raises(MaterializationError):
         materializer.materialize(
             partition=PARTITION,
-            sources=[
-                (
-                    source_file.read_bytes(),
-                    make_blob(),
-                )
-            ],
+            sources=sources,
         )
 
 
 def test_failed_second_source_aborts_group_with_already_written_first_source(
     tmp_path: Path,
+    make_event: Callable[..., dict],
 ) -> None:
     first_file = tmp_path / "first.ndjson"
     second_file = tmp_path / "invalid.ndjson"
 
     write_ndjson(
         first_file,
-        [make_event(event_id="event-001")],
+        [make_event()],
     )
 
     second_file.write_text(
@@ -367,19 +391,21 @@ def test_failed_second_source_aborts_group_with_already_written_first_source(
         target_size_mb=128,
     )
 
+    sources = [
+        (
+            first_file.read_bytes(),
+            make_blob("first.ndjson"),
+        ),
+        (
+            second_file.read_bytes(),
+            make_blob("invalid.ndjson"),
+        ),
+    ]
+
     with pytest.raises(MaterializationError):
         materializer.materialize(
             partition=PARTITION,
-            sources=[
-                (
-                    first_file.read_bytes(),
-                    make_blob("first.ndjson"),
-                ),
-                (
-                    second_file.read_bytes(),
-                    make_blob("invalid.ndjson"),
-                ),
-            ],
+            sources=sources,
         )
 
     output_dir = parquet_root / PARTITION
@@ -405,15 +431,17 @@ def test_failed_materialization_does_not_create_final_parquet(
         target_size_mb=128,
     )
 
+    sources = [
+        (
+            source_file.read_bytes(),
+            make_blob(),
+        )
+    ]
+
     with pytest.raises(MaterializationError):
         materializer.materialize(
             partition=PARTITION,
-            sources=[
-                (
-                    source_file.read_bytes(),
-                    make_blob(),
-                )
-            ],
+            sources=sources,
         )
 
     output_dir = parquet_root / PARTITION
@@ -424,6 +452,7 @@ def test_failed_materialization_does_not_create_final_parquet(
 
 def test_temporary_parquet_file_is_removed_after_success(
     tmp_path: Path,
+    make_event: Callable[..., dict],
 ) -> None:
     source_file = tmp_path / "events.ndjson"
 
@@ -445,14 +474,19 @@ def test_temporary_parquet_file_is_removed_after_success(
 
 def test_parquet_can_be_queried_by_duckdb(
     tmp_path: Path,
+    faker: Faker,
+    make_event: Callable[..., dict],
 ) -> None:
     source_file = tmp_path / "events.ndjson"
+
+    first_event_id = faker.uuid4()
+    second_event_id = faker.uuid4()
 
     write_ndjson(
         source_file,
         [
-            make_event(event_id="event-001"),
-            make_event(event_id="event-002"),
+            make_event(event_id=first_event_id),
+            make_event(event_id=second_event_id),
         ],
     )
 
@@ -472,14 +506,17 @@ def test_parquet_can_be_queried_by_duckdb(
             [str(result.path)],
         ).fetchall()
 
-    assert rows == [
-        ("event-001",),
-        ("event-002",),
-    ]
+    assert rows == sorted(
+        [
+            (first_event_id,),
+            (second_event_id,),
+        ]
+    )
 
 
 def test_materializes_multiple_sources_into_one_parquet(
     tmp_path: Path,
+    make_event: Callable[..., dict],
 ) -> None:
     first_file = tmp_path / "first.ndjson"
 
@@ -491,15 +528,15 @@ def test_materializes_multiple_sources_into_one_parquet(
     write_ndjson(
         first_file,
         [
-            make_event(event_id="event-001"),
-            make_event(event_id="event-002"),
+            make_event(),
+            make_event(),
         ],
     )
 
     write_ndjson(
         second_file,
         [
-            make_event(event_id="event-003"),
+            make_event(),
         ],
     )
 
@@ -542,6 +579,7 @@ def test_materializes_multiple_sources_into_one_parquet(
 
 def test_splits_sources_by_target_size(
     tmp_path: Path,
+    make_event: Callable[..., dict],
 ) -> None:
     first_file = tmp_path / "first.ndjson"
     second_file = tmp_path / "second.ndjson"
@@ -551,10 +589,10 @@ def test_splits_sources_by_target_size(
 
     large_value = "x" * (700 * 1024)
 
-    first_event = make_event(event_id="event-001")
+    first_event = make_event()
     first_event["payload"] = large_value
 
-    second_event = make_event(event_id="event-002")
+    second_event = make_event()
     second_event["payload"] = large_value
 
     write_ndjson(
@@ -608,6 +646,7 @@ def test_returns_empty_list_for_no_sources(
 
 def test_rejects_sources_from_other_partition(
     tmp_path: Path,
+    make_event: Callable[..., dict],
 ) -> None:
     source_file = tmp_path / "events.ndjson"
 
@@ -624,18 +663,20 @@ def test_rejects_sources_from_other_partition(
 
     materializer = make_materializer(tmp_path)
 
+    sources = [
+        (
+            source_file.read_bytes(),
+            blob,
+        )
+    ]
+
     with pytest.raises(
         ValueError,
         match="All blobs must belong",
     ):
         materializer.materialize(
             partition=PARTITION,
-            sources=[
-                (
-                    source_file.read_bytes(),
-                    blob,
-                )
-            ],
+            sources=sources,
         )
 
 

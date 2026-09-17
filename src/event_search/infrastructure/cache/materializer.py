@@ -23,6 +23,10 @@ EVENT_SCHEMA = pa.schema(
             pa.string(),
         ),
         pa.field(
+            "application",
+            pa.string(),
+        ),
+        pa.field(
             "user_id",
             pa.string(),
         ),
@@ -70,6 +74,7 @@ EVENT_SCHEMA = pa.schema(
 _RAW_EVENT_SCHEMA = pa.schema(
     [
         pa.field("event_id", pa.string()),
+        pa.field("application", pa.string()),
         pa.field("timestamp", pa.timestamp("us", tz="UTC")),
         pa.field(
             "event",
@@ -355,6 +360,7 @@ class ParquetMaterializer:
         return pa.Table.from_arrays(
             [
                 parsed["event_id"],
+                parsed["application"],
                 user_id,
                 organization_id,
                 event_name,

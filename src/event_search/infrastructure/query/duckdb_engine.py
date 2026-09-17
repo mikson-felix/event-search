@@ -58,6 +58,10 @@ class DuckDBQueryEngine:
                 conditions.append("event_id = ?")
                 params.append(filters.event_id)
 
+            if filters.application is not None:
+                conditions.append("application = ?")
+                params.append(filters.application)
+
             if filters.user_id is not None:
                 conditions.append("user_id = ?")
                 params.append(filters.user_id)

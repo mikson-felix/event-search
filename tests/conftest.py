@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import zlib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -7,33 +8,39 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from faker import Faker
+
+
+@pytest.fixture(autouse=True)
+def faker_seed(request: pytest.FixtureRequest) -> int:
+    return zlib.crc32(request.node.nodeid.encode())
 
 
 @pytest.fixture
-def event_payload() -> dict[str, Any]:
+def event_payload(faker: Faker) -> dict[str, Any]:
     return {
-        "event_id": "event-001",
+        "event_id": faker.uuid4(),
         "timestamp": "2026-09-09T08:30:00Z",
         "schema_version": "1.0",
-        "application": "test-service",
+        "application": faker.word(),
         "event": {
-            "name": "LOGIN",
+            "name": faker.word(),
             "grouping": "authentication",
-            "category": "AUTH",
+            "category": faker.word(),
         },
         "actor": {
-            "user_id": "user-001",
+            "user_id": faker.uuid4(),
             "roles": ["admin"],
-            "organization_id": "org-001",
+            "organization_id": faker.uuid4(),
         },
         "metadata": {
-            "ip_address": "127.0.0.1",
+            "ip_address": faker.ipv4(),
             "user_agent": "pytest",
         },
         "attributes": {},
         "data_affected": [],
         "sensitive_action": False,
-        "correlation_id": "correlation-001",
+        "correlation_id": faker.uuid4(),
     }
 
 
@@ -42,6 +49,7 @@ def parquet_schema() -> pa.Schema:
     return pa.schema(
         [
             pa.field("event_id", pa.string()),
+            pa.field("application", pa.string()),
             pa.field("user_id", pa.string()),
             pa.field("organization_id", pa.string()),
             pa.field("event_name", pa.string()),
