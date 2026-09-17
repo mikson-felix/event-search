@@ -105,6 +105,7 @@ def extract_indexed_event(
 
     return {
         "event_id": _as_optional_string(event.get("event_id")),
+        "application": _as_optional_string(event.get("application")),
         "user_id": _as_optional_string(user_id),
         "organization_id": _as_optional_string(organization_id),
         "event_name": _as_optional_string(event_name),

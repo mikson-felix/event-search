@@ -36,6 +36,7 @@ class MaterializationResult:
 @dataclass(frozen=True)
 class SearchFilters:
     event_id: str | None = None
+    application: str | None = None
     user_id: str | None = None
     organization_id: str | None = None
     event_name: str | None = None

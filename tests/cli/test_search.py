@@ -338,6 +338,8 @@ def test_search_passes_all_filters() -> None:
         [
             "--event-id",
             "event-001",
+            "--application",
+            "stellar-clinician-portal",
             "--user-id",
             "user-001",
             "--organization-id",
@@ -357,6 +359,7 @@ def test_search_passes_all_filters() -> None:
     app.search_service.search.assert_called_once_with(
         filters=SearchFilters(
             event_id="event-001",
+            application="stellar-clinician-portal",
             user_id="user-001",
             organization_id="org-001",
             event_name="LOGIN",
@@ -462,6 +465,7 @@ def test_search_help() -> None:
     assert "--from DATETIME" in result.output
     assert "--to DATETIME" in result.output
     assert "--event-id TEXT" in result.output
+    assert "--application TEXT" in result.output
     assert "--user-id TEXT" in result.output
     assert "--organization-id TEXT" in result.output
     assert "--event-name TEXT" in result.output

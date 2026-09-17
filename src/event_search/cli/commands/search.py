@@ -49,6 +49,12 @@ from event_search.domain.models import SearchFilters
     help="Filter by exact event ID.",
 )
 @click.option(
+    "--application",
+    type=str,
+    metavar="TEXT",
+    help="Filter by exact application.",
+)
+@click.option(
     "--user-id",
     type=str,
     metavar="TEXT",
@@ -86,6 +92,7 @@ def search_command(
     date_from: str | None,
     date_to: str | None,
     event_id: str | None,
+    application: str | None,
     user_id: str | None,
     organization_id: str | None,
     event_name: str | None,
@@ -124,6 +131,7 @@ def search_command(
 
     filters = SearchFilters(
         event_id=event_id,
+        application=application,
         user_id=user_id,
         organization_id=organization_id,
         event_name=event_name,

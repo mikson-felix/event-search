@@ -520,6 +520,7 @@ During materialization, Event Search extracts a small set of searchable fields.
 | Field | Source |
 | --- | --- |
 | `event_id` | `event_id` |
+| `application` | `application` |
 | `timestamp` | `timestamp` |
 | `user_id` | `actor.user_id`, fallback `attributes.user_id` |
 | `organization_id` | `actor.organization_id`, fallback `attributes.organization_id` |
@@ -848,6 +849,7 @@ If no time range is provided, Event Search searches the **last hour**.
 | `--from DATETIME` | datetime | Start of the interval |
 | `--to DATETIME` | datetime | End of the interval |
 | `--event-id TEXT` | text | Exact event ID |
+| `--application TEXT` | text | Exact application |
 | `--user-id TEXT` | text | Exact user ID |
 | `--organization-id TEXT` | text | Exact organization ID |
 | `--event-name TEXT` | text | Exact event name |

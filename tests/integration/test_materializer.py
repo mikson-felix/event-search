@@ -28,6 +28,7 @@ def make_blob(
 def make_event(
     *,
     event_id: str = "event-001",
+    application: str = "test-service",
     user_id: str = "user-001",
     organization_id: str = "org-001",
     event_name: str = "document.opened",
@@ -36,6 +37,7 @@ def make_event(
 ) -> dict:
     return {
         "event_id": event_id,
+        "application": application,
         "timestamp": timestamp,
         "event": {
             "name": event_name,
@@ -139,6 +141,7 @@ def test_materializes_indexed_fields(
         [
             make_event(
                 event_id="event-001",
+                application="stellar-clinician-portal",
                 user_id="user-123",
                 organization_id="org-456",
                 event_name="file.downloaded",
@@ -158,6 +161,7 @@ def test_materializes_indexed_fields(
     row = table.to_pylist()[0]
 
     assert row["event_id"] == "event-001"
+    assert row["application"] == "stellar-clinician-portal"
     assert row["user_id"] == "user-123"
     assert row["organization_id"] == "org-456"
     assert row["event_name"] == "file.downloaded"
@@ -308,15 +312,17 @@ def test_invalid_ndjson_raises_materialization_error(
 
     materializer = make_materializer(tmp_path)
 
+    sources = [
+        (
+            source_file.read_bytes(),
+            make_blob(),
+        )
+    ]
+
     with pytest.raises(MaterializationError):
         materializer.materialize(
             partition=PARTITION,
-            sources=[
-                (
-                    source_file.read_bytes(),
-                    make_blob(),
-                )
-            ],
+            sources=sources,
         )
 
 
@@ -332,15 +338,17 @@ def test_invalid_timestamp_raises_materialization_error(
 
     materializer = make_materializer(tmp_path)
 
+    sources = [
+        (
+            source_file.read_bytes(),
+            make_blob(),
+        )
+    ]
+
     with pytest.raises(MaterializationError):
         materializer.materialize(
             partition=PARTITION,
-            sources=[
-                (
-                    source_file.read_bytes(),
-                    make_blob(),
-                )
-            ],
+            sources=sources,
         )
 
 
@@ -367,19 +375,21 @@ def test_failed_second_source_aborts_group_with_already_written_first_source(
         target_size_mb=128,
     )
 
+    sources = [
+        (
+            first_file.read_bytes(),
+            make_blob("first.ndjson"),
+        ),
+        (
+            second_file.read_bytes(),
+            make_blob("invalid.ndjson"),
+        ),
+    ]
+
     with pytest.raises(MaterializationError):
         materializer.materialize(
             partition=PARTITION,
-            sources=[
-                (
-                    first_file.read_bytes(),
-                    make_blob("first.ndjson"),
-                ),
-                (
-                    second_file.read_bytes(),
-                    make_blob("invalid.ndjson"),
-                ),
-            ],
+            sources=sources,
         )
 
     output_dir = parquet_root / PARTITION
@@ -405,15 +415,17 @@ def test_failed_materialization_does_not_create_final_parquet(
         target_size_mb=128,
     )
 
+    sources = [
+        (
+            source_file.read_bytes(),
+            make_blob(),
+        )
+    ]
+
     with pytest.raises(MaterializationError):
         materializer.materialize(
             partition=PARTITION,
-            sources=[
-                (
-                    source_file.read_bytes(),
-                    make_blob(),
-                )
-            ],
+            sources=sources,
         )
 
     output_dir = parquet_root / PARTITION
@@ -624,18 +636,20 @@ def test_rejects_sources_from_other_partition(
 
     materializer = make_materializer(tmp_path)
 
+    sources = [
+        (
+            source_file.read_bytes(),
+            blob,
+        )
+    ]
+
     with pytest.raises(
         ValueError,
         match="All blobs must belong",
     ):
         materializer.materialize(
             partition=PARTITION,
-            sources=[
-                (
-                    source_file.read_bytes(),
-                    blob,
-                )
-            ],
+            sources=sources,
         )
 
 

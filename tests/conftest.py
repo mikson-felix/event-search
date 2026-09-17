@@ -42,6 +42,7 @@ def parquet_schema() -> pa.Schema:
     return pa.schema(
         [
             pa.field("event_id", pa.string()),
+            pa.field("application", pa.string()),
             pa.field("user_id", pa.string()),
             pa.field("organization_id", pa.string()),
             pa.field("event_name", pa.string()),

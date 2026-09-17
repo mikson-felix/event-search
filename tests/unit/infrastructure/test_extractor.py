@@ -19,6 +19,7 @@ def test_extracts_indexed_fields(event_payload: dict) -> None:
     )
 
     assert result["event_id"] == "event-001"
+    assert result["application"] == "test-service"
     assert result["user_id"] == "user-001"
     assert result["organization_id"] == "org-001"
     assert result["event_name"] == "LOGIN"
@@ -129,6 +130,7 @@ def test_optional_fields_can_be_missing(
     event_payload: dict,
 ) -> None:
     event_payload.pop("actor")
+    event_payload.pop("application")
     event_payload["event"].pop("name")
     event_payload["event"].pop("category")
 
@@ -139,6 +141,7 @@ def test_optional_fields_can_be_missing(
         source_line=1,
     )
 
+    assert result["application"] is None
     assert result["user_id"] is None
     assert result["organization_id"] is None
     assert result["event_name"] is None
@@ -149,6 +152,7 @@ def test_non_string_values_are_converted_to_strings(
     event_payload: dict,
 ) -> None:
     event_payload["event_id"] = 123
+    event_payload["application"] = 999
     event_payload["actor"]["user_id"] = 456
     event_payload["actor"]["organization_id"] = 789
 
@@ -160,6 +164,7 @@ def test_non_string_values_are_converted_to_strings(
     )
 
     assert result["event_id"] == "123"
+    assert result["application"] == "999"
     assert result["user_id"] == "456"
     assert result["organization_id"] == "789"
 
@@ -235,12 +240,14 @@ def test_timestamp_must_be_string(
 ) -> None:
     event_payload["timestamp"] = 123
 
+    raw_line = orjson.dumps(event_payload)
+
     with pytest.raises(
         ValueError,
         match="Event timestamp must be a string",
     ):
         extract_indexed_event(
-            orjson.dumps(event_payload),
+            raw_line,
             blob_partition="2026/09/09/08",
             blob_name="events.ndjson",
             source_line=1,
@@ -248,12 +255,14 @@ def test_timestamp_must_be_string(
 
 
 def test_json_line_must_be_object() -> None:
+    raw_line = orjson.dumps(["not", "an", "object"])
+
     with pytest.raises(
         ValueError,
         match="NDJSON line must contain a JSON object",
     ):
         extract_indexed_event(
-            orjson.dumps(["not", "an", "object"]),
+            raw_line,
             blob_partition="2026/09/09/08",
             blob_name="events.ndjson",
             source_line=1,

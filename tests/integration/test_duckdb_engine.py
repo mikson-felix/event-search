@@ -44,6 +44,7 @@ def make_row(
     *,
     event_id: str,
     timestamp: str,
+    application: str = "test-service",
     user_id: str = "user-001",
     organization_id: str = "org-001",
     event_name: str = "LOGIN",
@@ -53,6 +54,7 @@ def make_row(
 ) -> dict:
     return {
         "event_id": event_id,
+        "application": application,
         "user_id": user_id,
         "organization_id": organization_id,
         "event_name": event_name,
@@ -181,6 +183,88 @@ def test_filters_by_event_id(
     )
 
     assert [item.event_id for item in result] == ["event-002"]
+
+
+def test_filters_by_user_id(
+    tmp_path: Path,
+    make_parquet,
+) -> None:
+    make_parquet(
+        partition="2026/09/09/08",
+        file_name="events.parquet",
+        rows=[
+            make_row(
+                event_id="event-001",
+                timestamp="2026-09-09T08:10:00Z",
+                user_id="user-target",
+            ),
+            make_row(
+                event_id="event-002",
+                timestamp="2026-09-09T08:20:00Z",
+                user_id="other-user",
+                source_line=2,
+            ),
+        ],
+    )
+
+    engine = DuckDBQueryEngine(
+        parquet_root=tmp_path / "parquet",
+    )
+
+    result = engine.search(
+        time_range=make_range(
+            8,
+            9,
+        ),
+        partitions=["2026/09/09/08"],
+        filters=SearchFilters(
+            user_id="user-target",
+        ),
+        limit=100,
+    )
+
+    assert [item.event_id for item in result] == ["event-001"]
+
+
+def test_filters_by_application(
+    tmp_path: Path,
+    make_parquet,
+) -> None:
+    make_parquet(
+        partition="2026/09/09/08",
+        file_name="events.parquet",
+        rows=[
+            make_row(
+                event_id="event-001",
+                timestamp="2026-09-09T08:10:00Z",
+                application="stellar-clinician-portal",
+            ),
+            make_row(
+                event_id="event-002",
+                timestamp="2026-09-09T08:20:00Z",
+                application="other-service",
+                source_line=2,
+            ),
+        ],
+    )
+
+    engine = DuckDBQueryEngine(
+        parquet_root=tmp_path / "parquet",
+    )
+
+    result = engine.search(
+        time_range=make_range(
+            8,
+            9,
+        ),
+        partitions=["2026/09/09/08"],
+        filters=SearchFilters(
+            application="stellar-clinician-portal",
+        ),
+        limit=100,
+    )
+
+    assert [item.event_id for item in result] == ["event-001"]
 
 
 def test_combines_filters_with_and(
