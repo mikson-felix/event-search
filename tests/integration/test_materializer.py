@@ -78,10 +78,14 @@ def make_materializer(
     tmp_path: Path,
     *,
     target_size_mb: int = 128,
+    parse_batch_size_mb: int = 128,
+    write_batch_size_mb: int = 128,
 ) -> ParquetMaterializer:
     return ParquetMaterializer(
         tmp_path / "parquet",
         target_size_mb=target_size_mb,
+        parse_batch_size_mb=parse_batch_size_mb,
+        write_batch_size_mb=write_batch_size_mb,
     )
 
 
@@ -691,3 +695,195 @@ def test_rejects_invalid_target_size(
             tmp_path / "parquet",
             target_size_mb=0,
         )
+
+
+def test_rejects_invalid_parse_batch_size(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="parse_batch_size_mb",
+    ):
+        ParquetMaterializer(
+            tmp_path / "parquet",
+            target_size_mb=128,
+            parse_batch_size_mb=0,
+        )
+
+
+def test_rejects_invalid_write_batch_size(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="write_batch_size_mb",
+    ):
+        ParquetMaterializer(
+            tmp_path / "parquet",
+            target_size_mb=128,
+            write_batch_size_mb=0,
+        )
+
+
+def test_batching_produces_identical_rows_to_unbatched(
+    tmp_path: Path,
+    make_event: Callable[..., dict],
+) -> None:
+    large_value = "x" * (700 * 1024)
+
+    sources = []
+
+    for index in range(4):
+        event = make_event()
+        event["payload"] = large_value
+
+        file_name = f"blob-{index}.ndjson"
+        source_file = tmp_path / file_name
+        write_ndjson(source_file, [event])
+
+        sources.append(
+            (
+                source_file.read_bytes(),
+                make_blob(file_name),
+            )
+        )
+
+    unbatched = make_materializer(tmp_path / "unbatched")
+    batched = make_materializer(
+        tmp_path / "batched",
+        parse_batch_size_mb=1,
+        write_batch_size_mb=1,
+    )
+
+    unbatched_results = unbatched.materialize(
+        partition=PARTITION,
+        sources=sources,
+    )
+    batched_results = batched.materialize(
+        partition=PARTITION,
+        sources=sources,
+    )
+
+    assert len(unbatched_results) == 1
+    assert len(batched_results) == 1
+
+    def sorted_rows(path: Path) -> list[dict]:
+        return sorted(
+            pq.read_table(path).to_pylist(),
+            key=lambda row: row["event_id"],
+        )
+
+    assert sorted_rows(unbatched_results[0].path) == sorted_rows(batched_results[0].path)
+
+    # Confirms the batching thresholds actually forced multiple parse/write
+    # batches for this input, rather than both variants trivially collapsing
+    # to a single batch (which would make the equality above meaningless).
+    assert pq.ParquetFile(unbatched_results[0].path).metadata.num_row_groups == 1
+    assert pq.ParquetFile(batched_results[0].path).metadata.num_row_groups > 1
+
+
+def test_splits_sources_by_target_size_with_small_batches(
+    tmp_path: Path,
+    make_event: Callable[..., dict],
+) -> None:
+    first_file = tmp_path / "first.ndjson"
+    second_file = tmp_path / "second.ndjson"
+
+    first_blob = make_blob("first.ndjson")
+    second_blob = make_blob("second.ndjson")
+
+    large_value = "x" * (700 * 1024)
+
+    first_event = make_event()
+    first_event["payload"] = large_value
+
+    second_event = make_event()
+    second_event["payload"] = large_value
+
+    write_ndjson(
+        first_file,
+        [first_event],
+    )
+    write_ndjson(
+        second_file,
+        [second_event],
+    )
+
+    materializer = ParquetMaterializer(
+        tmp_path / "parquet",
+        target_size_mb=1,
+        parse_batch_size_mb=1,
+        write_batch_size_mb=1,
+    )
+
+    results = materializer.materialize(
+        partition=PARTITION,
+        sources=[
+            (
+                first_file.read_bytes(),
+                first_blob,
+            ),
+            (
+                second_file.read_bytes(),
+                second_blob,
+            ),
+        ],
+    )
+
+    assert len(results) == 2
+
+    assert results[0].blobs == (first_blob,)
+    assert results[1].blobs == (second_blob,)
+
+
+def test_abort_cleans_up_after_writer_already_flushed(
+    tmp_path: Path,
+    make_event: Callable[..., dict],
+) -> None:
+    large_value = "x" * (1200 * 1024)
+
+    good_file = tmp_path / "good.ndjson"
+    good_event = make_event()
+    good_event["payload"] = large_value
+
+    write_ndjson(
+        good_file,
+        [good_event],
+    )
+
+    bad_file = tmp_path / "invalid.ndjson"
+    bad_file.write_text(
+        "{invalid json}\n",
+        encoding="utf-8",
+    )
+
+    parquet_root = tmp_path / "parquet"
+
+    materializer = ParquetMaterializer(
+        parquet_root,
+        target_size_mb=128,
+        parse_batch_size_mb=1,
+        write_batch_size_mb=1,
+    )
+
+    sources = [
+        (
+            good_file.read_bytes(),
+            make_blob("good.ndjson"),
+        ),
+        (
+            bad_file.read_bytes(),
+            make_blob("invalid.ndjson"),
+        ),
+    ]
+
+    with pytest.raises(MaterializationError):
+        materializer.materialize(
+            partition=PARTITION,
+            sources=sources,
+        )
+
+    output_dir = parquet_root / PARTITION
+
+    assert list(output_dir.glob("*.parquet")) == []
+    assert list(output_dir.glob("*.tmp")) == []

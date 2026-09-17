@@ -492,7 +492,8 @@ new Parquet parts
 
 Event Search does not need to load an entire large materialization group into Python objects before writing Parquet.
 
-Rows are buffered and written through `PyArrow ParquetWriter`.
+Blobs are parsed and written in `PARSE_BATCH_SIZE_MB` / `WRITE_BATCH_SIZE_MB` chunks (default 4 MB each) through
+`PyArrow ParquetWriter`, not one at a time and not all at once.
 
 Conceptually:
 
@@ -500,16 +501,23 @@ Conceptually:
 NDJSON stream
      │
      ▼
-small row batch
+several blobs batched (≈ PARSE_BATCH_SIZE_MB)
      │
      ▼
-Parquet row group
+one read_json() call
      │
      ▼
-next row batch
+parsed tables buffered (≈ WRITE_BATCH_SIZE_MB)
+     │
+     ▼
+one write_table() call → Parquet row group
+     │
+     ▼
+next batch
 ```
 
-This keeps memory usage bounded while processing larger NDJSON groups.
+This keeps memory usage bounded while processing larger NDJSON groups, and produces far fewer, larger Parquet row
+groups than one row group per blob.
 
 ---
 
@@ -644,6 +652,8 @@ EVENT_SEARCH_SEARCH__MAX_LIMIT=10000
 EVENT_SEARCH_SYNC__CONCURRENCY=4
 EVENT_SEARCH_SYNC__DOWNLOAD_CONCURRENCY=16
 EVENT_SEARCH_SYNC__TARGET_PARQUET_SIZE_MB=128
+EVENT_SEARCH_SYNC__PARSE_BATCH_SIZE_MB=4
+EVENT_SEARCH_SYNC__WRITE_BATCH_SIZE_MB=4
 
 EVENT_SEARCH_LOGGING__LEVEL=INFO
 ```
@@ -729,6 +739,8 @@ These control the default and maximum number of returned search rows.
 EVENT_SEARCH_SYNC__CONCURRENCY=4
 EVENT_SEARCH_SYNC__DOWNLOAD_CONCURRENCY=16
 EVENT_SEARCH_SYNC__TARGET_PARQUET_SIZE_MB=128
+EVENT_SEARCH_SYNC__PARSE_BATCH_SIZE_MB=4
+EVENT_SEARCH_SYNC__WRITE_BATCH_SIZE_MB=4
 ```
 
 `CONCURRENCY` controls how many UTC-hour partitions can be synchronized simultaneously.
@@ -751,6 +763,31 @@ Each worker owns one logical hour partition.
 The Azure Blob adapter currently uses the synchronous Azure SDK, so synchronization uses `ThreadPoolExecutor` rather than asyncio.
 
 `TARGET_PARQUET_SIZE_MB` controls the approximate NDJSON input size grouped into one generated Parquet file.
+
+`PARSE_BATCH_SIZE_MB` and `WRITE_BATCH_SIZE_MB` control how many blobs are parsed, and how many parsed blob tables
+are written, per underlying PyArrow call - independently of `TARGET_PARQUET_SIZE_MB`, which only decides file
+boundaries.
+
+Both exist because real event archives are often made of many small blobs rather than a few large ones. Calling
+PyArrow's JSON parser and `ParquetWriter.write_table()` once per blob adds fixed per-call overhead that dominates
+when blobs are small - on a sample archive of ~12,900 blobs averaging ~30 events each, batching cut materialization
+time by roughly 85% and cache size by roughly 70% versus one call per blob, entirely from batching, with no change
+to the indexed fields, `raw_json`, or the Parquet schema:
+
+```text
+PARSE_BATCH_SIZE_MB  → blobs are concatenated into one buffer before a single read_json() call,
+                        then the parsed rows are sliced back apart per blob.
+
+WRITE_BATCH_SIZE_MB  → parsed blob tables are buffered and concatenated into one write_table() call,
+                        producing fewer, larger Parquet row groups per file.
+```
+
+Larger row groups also make single-event lookups (`show`) faster, since DuckDB otherwise spends most of a point
+lookup evaluating row-group statistics rather than decompressing data - fewer, larger row groups means less of that
+bookkeeping per lookup.
+
+Both default to `4`. Regardless of their value, `TARGET_PARQUET_SIZE_MB` rotation and per-blob manifest bookkeeping
+are unaffected - batching only changes how many PyArrow calls it takes to produce the same Parquet output.
 
 ---
 
@@ -1435,7 +1472,7 @@ event-search --version
 Example:
 
 ```text
-event-search, version 0.3.2
+event-search, version 0.4.0
 ```
 
 The version has a single source of truth:
@@ -1957,9 +1994,10 @@ parallel.
 
 This improves Azure listing, download, and materialization throughput without introducing async infrastructure into the CLI application.
 
-Within a partition, downloading and materialization are pipelined rather than sequential phases: as soon as one blob
-finishes downloading, `ParquetMaterializer` starts parsing and writing it while the remaining blobs in that partition
-are still downloading in the background. This overlap is most effective when a partition has more blobs than
+Within a partition, downloading and materialization are pipelined rather than sequential phases: as downloaded blobs
+accumulate, `ParquetMaterializer` parses and writes them in `PARSE_BATCH_SIZE_MB` / `WRITE_BATCH_SIZE_MB` batches
+while the remaining blobs in that partition are still downloading in the background, rather than acting on every
+single blob the instant it finishes. This overlap is most effective when a partition has more blobs than
 `DOWNLOAD_CONCURRENCY` (multiple download "waves") - for partitions with few blobs it has little effect, since there
 is nothing left downloading to overlap with.
 
@@ -2012,6 +2050,8 @@ Currently supported:
 ✓ NDJSON compaction
 ✓ configurable materialization target size
 ✓ batched PyArrow Parquet writes
+✓ batched NDJSON parsing (configurable size)
+✓ batched Parquet row-group writes (configurable size)
 ✓ SQLite metadata
 ✓ Parquet event cache
 ✓ DuckDB analytical queries
